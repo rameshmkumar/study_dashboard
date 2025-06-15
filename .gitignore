@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.so
+*.pyc
+
+# Virtual environment
+venv/
+.venv/
+env/
+.env
+ENV/
+env.bak/
+venv.bak/
+
+# Instance folder (contains the local SQLite database)
+instance/
+
+# IDE / OS specific
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Coverage reports
+.coverage
+htmlcov/
+
+# Build artifacts
+/build/
+/dist/
+/downloads/
+/eggs/
+/*.egg-info/
+/parts/
+/sdist/
+/var/
+/wheels/
+pip-wheel-metadata/
+manifest # Manifest files are typically specific to a build
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Other common ignores
+.Python
+celerybeat-schedule
+celerybeat.pid
+*.seed
+/profile_default/
+ipython_config.py
+dump.rdb
+# If you use Pipenv
+Pipfile.lock
+# If you use Poetry
+poetry.lock
