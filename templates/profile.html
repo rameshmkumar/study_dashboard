@@ -1,0 +1,43 @@
+{% extends "layout.html" %}
+
+{% block title %}Your Profile - FocusFlow{% endblock %}
+
+{% block content %}
+<div class="auth-container" style="max-width: 600px;">
+    <h1>Your Profile</h1>
+    
+    <div class="profile-info">
+        <h3>Account Details</h3>
+        <p><strong>Username:</strong> {{ user.username }}</p>
+        <p><strong>Email:</strong> {{ user.email }}</p>
+        <p><strong>Joined:</strong> {{ user.created_at.strftime('%B %d, %Y') if user.created_at else 'N/A' }}</p>
+        <!-- Add more stats here later if desired, e.g., total tasks completed, longest streak -->
+    </div>
+
+    <h3 style="font-family: 'Space Grotesk', sans-serif; margin-bottom:20px; margin-top: 30px; color: var(--text-color);">Change Password</h3>
+    <form method="POST" action="{{ url_for('profile') }}">
+        <div class="form-group">
+            <label for="current_password">Current Password</label>
+            <input type="password" id="current_password" name="current_password" class="form-control" required autocomplete="current-password">
+        </div>
+        <div class="form-group">
+            <label for="new_password">New Password</label>
+            <input type="password" id="new_password" name="new_password" class="form-control" minlength="6" required autocomplete="new-password">
+        </div>
+        <div class="form-group">
+            <label for="confirm_password">Confirm New Password</label>
+            <input type="password" id="confirm_password" name="confirm_password" class="form-control" required autocomplete="new-password">
+        </div>
+        <button type="submit" class="btn btn-submit">Update Password</button>
+    </form>
+
+    <!-- Optional: Delete Account Section -->
+    <!--
+    <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--glass-border);">
+        <h3 style="font-family: 'Space Grotesk', sans-serif; margin-bottom:10px; color: var(--danger-color);">Danger Zone</h3>
+        <p style="color: var(--secondary-text); margin-bottom:15px;">Deleting your account is permanent and cannot be undone.</p>
+        <button class="btn btn-danger" onclick="if(confirm('Are you absolutely sure you want to delete your account? This action is irreversible.')) { /* Call delete account endpoint */ }">Delete My Account</button>
+    </div>
+    -->
+</div>
+{% endblock %}

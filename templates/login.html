@@ -1,0 +1,31 @@
+{% extends "layout.html" %}
+
+{% block title %}Login - FocusFlow{% endblock %}
+
+{% block content %}
+<div class="auth-container">
+    <h1>Login to FocusFlow</h1>
+    <form method="POST" action="{{ url_for('login') }}">
+        <div class="form-group">
+            <label for="username">Username</label>
+            <input type="text" id="username" name="username" class="form-control" required autocomplete="username">
+        </div>
+        <div class="form-group">
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" class="form-control" required autocomplete="current-password">
+        </div>
+        <div class="form-group" style="display:flex; align-items:center; justify-content: space-between;">
+            <div>
+                <input type="checkbox" id="remember" name="remember" style="margin-right: 8px; width:auto; vertical-align: middle;">
+                <label for="remember" style="margin-bottom:0; font-weight:normal; display: inline;">Remember me</label>
+            </div>
+            <!-- Optional: Forgot password link -->
+            <!-- <a href="#" style="color: var(--accent-light); font-size: 0.9em;">Forgot password?</a> -->
+        </div>
+        <button type="submit" class="btn btn-submit">Login</button>
+    </form>
+    <div class="auth-links">
+        <p>Don't have an account? <a href="{{ url_for('signup') }}">Sign Up</a></p>
+    </div>
+</div>
+{% endblock %}
