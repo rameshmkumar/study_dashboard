@@ -3,10 +3,11 @@ document.addEventListener('DOMContentLoaded', async function() {
   let dailyTasks = []; // Holds tasks for the current day, fetched from backend
   let currentSelectedTaskId = null; // DB ID of the task selected for the timer
   let timerInterval = null;
-  let timerStartTime = 0; // Timestamp when current segment started
-  let accumulatedPausedTime = 0; // Total time paused for current segment
-  let timerIsPaused = false;
-  // focusModeActive remains client-side for now
+  let currentSessionId = null; // Session ID for current timer
+  let serverSyncInterval = null; // Interval for syncing with server
+  let timerState = 'stopped'; // stopped, running, paused
+  let currentViewDate = new Date(); // Current date being viewed
+  let focusModeActive = false; // Focus mode state
 
   // DOM elements
   const timerDisplay = document.getElementById('timerDisplay');
@@ -18,8 +19,7 @@ document.addEventListener('DOMContentLoaded', async function() {
   const scheduleTableBody = document.getElementById('scheduleTableBody');
   const activityLog = document.getElementById('activityLog');
   const notification = document.getElementById('notification');
-  const dailyNotes = document.getElementById('dailyNotes');
-  const saveNotesBtn = document.getElementById('saveNotesBtn');
+  // Note: Removed dailyNotes and saveNotesBtn as we now use individual notes only
   const currentTimeEl = document.getElementById('currentTime');
   const currentDateEl = document.getElementById('currentDate');
   const progressBar = document.getElementById('progressBar');
@@ -33,13 +33,55 @@ document.addEventListener('DOMContentLoaded', async function() {
   const addTaskModal = document.getElementById('addTaskModal'); // New modal
   const closeAddTaskModalBtn = document.getElementById('closeAddTaskModalBtn'); // New
   const addTaskForm = document.getElementById('addTaskForm'); // New
+  
+  // Notes elements
+  const addNoteBtn = document.getElementById('addNoteBtn');
+  const addNoteModal = document.getElementById('addNoteModal');
+  const closeAddNoteModalBtn = document.getElementById('closeAddNoteModalBtn');
+  const addNoteForm = document.getElementById('addNoteForm');
+  const notesList = document.getElementById('notesList');
+  
+  // Date navigation elements
+  const datePicker = document.getElementById('datePicker');
+  const prevDateBtn = document.getElementById('prevDateBtn');
+  const nextDateBtn = document.getElementById('nextDateBtn');
+  
+  // Focus mode toggle
+  const focusModeToggle = document.getElementById('focusModeToggle');
 
   // --- API Helper Functions ---
+  let csrfToken = null;
+  
+  // Get CSRF token for API requests
+  async function getCsrfToken() {
+    if (!csrfToken) {
+      try {
+        const response = await fetch('/api/csrf-token');
+        if (response.ok) {
+          const data = await response.json();
+          csrfToken = data.csrf_token;
+        }
+      } catch (error) {
+        console.error('Failed to get CSRF token:', error);
+      }
+    }
+    return csrfToken;
+  }
+
   async function fetchData(url = '', method = 'GET', data = null) {
     const config = {
       method: method,
       headers: { 'Content-Type': 'application/json' },
     };
+    
+    // Add CSRF token for state-changing requests
+    if (method === 'POST' || method === 'PUT' || method === 'DELETE') {
+      const token = await getCsrfToken();
+      if (token) {
+        config.headers['X-CSRFToken'] = token;
+      }
+    }
+    
     if (data && (method === 'POST' || method === 'PUT')) {
       config.body = JSON.stringify(data);
     }
@@ -48,6 +90,15 @@ document.addEventListener('DOMContentLoaded', async function() {
       if (response.status === 401) { // Unauthorized
         window.location.href = '/login'; // Redirect to login
         return null;
+      }
+      if (response.status === 400 && (method === 'POST' || method === 'PUT' || method === 'DELETE')) {
+        // CSRF token might be expired, refresh and retry once
+        csrfToken = null;
+        const newToken = await getCsrfToken();
+        if (newToken && config.headers['X-CSRFToken'] !== newToken) {
+          config.headers['X-CSRFToken'] = newToken;
+          return fetchData(url, method, data); // Retry once
+        }
       }
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ message: "Unknown error" }));
@@ -65,43 +116,71 @@ document.addEventListener('DOMContentLoaded', async function() {
   }
 
   function getTodayDateString() {
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = (today.getMonth() + 1).toString().padStart(2, '0');
-    const day = today.getDate().toString().padStart(2, '0');
+    return getDateString(new Date());
+  }
+  
+  function getCurrentViewDateString() {
+    return getDateString(currentViewDate);
+  }
+  
+  function getDateString(date) {
+    const year = date.getFullYear();
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const day = date.getDate().toString().padStart(2, '0');
     return `${year}-${month}-${day}`;
   }
 
   // --- Core App Logic ---
   async function initApp() {
-    const dateString = getTodayDateString();
+    // Initialize theme first
+    initializeTheme();
     
-    const summaryData = await fetchData(`/api/daily-summary?date=${dateString}`);
-    if (!summaryData) return; // Error handled by fetchData
-
-    dailyTasks = summaryData.tasks || [];
-    dailyNotes.value = summaryData.notes || '';
-    renderActivityLog(summaryData.activityLog);
-    renderStreak(summaryData.streak);
+    // Initialize date picker with today's date
+    if (datePicker) {
+      datePicker.value = getCurrentViewDateString();
+    }
     
-    renderSchedule();
-    renderTaskOptions();
-    updateDateTime();
-    updateAllStats();
+    await loadDataForDate(getCurrentViewDateString());
+    
+    // Check for existing running timer and resume if found (only for today)
+    if (getCurrentViewDateString() === getTodayDateString()) {
+      await checkForRunningTimer();
+    }
+    
+    setupDateNavigation();
     
     // Event listeners
     startBtn.addEventListener('click', startTimer);
     pauseBtn.addEventListener('click', pauseTimer);
     stopBtn.addEventListener('click', stopTimer);
-    saveNotesBtn.addEventListener('click', saveNotes);
     
     if(addTaskBtn) addTaskBtn.addEventListener('click', () => addTaskModal.style.display = 'block');
     if(closeAddTaskModalBtn) closeAddTaskModalBtn.addEventListener('click', () => addTaskModal.style.display = 'none');
     if(addTaskForm) addTaskForm.addEventListener('submit', handleAddTask);
+    
+    // Notes event listeners
+    if(addNoteBtn) addNoteBtn.addEventListener('click', () => {
+      // Clear any edit mode state
+      delete addNoteForm.dataset.editing;
+      document.getElementById('addNoteModalTitle').textContent = "Add New Note";
+      document.getElementById('addNoteSubmitBtn').textContent = "Add Note";
+      addNoteModal.style.display = 'block';
+    });
+    if(closeAddNoteModalBtn) closeAddNoteModalBtn.addEventListener('click', () => {
+      addNoteModal.style.display = 'none';
+      delete addNoteForm.dataset.editing; // Clear edit mode when closing
+    });
+    if(addNoteForm) addNoteForm.addEventListener('submit', handleAddNote);
+    
+    // Focus mode toggle
+    if(focusModeToggle) focusModeToggle.addEventListener('click', toggleFocusMode);
 
     window.onclick = function(event) {
         if (event.target == addTaskModal) {
             addTaskModal.style.display = "none";
+        }
+        if (event.target == addNoteModal) {
+            addNoteModal.style.display = "none";
         }
     }
     
@@ -110,7 +189,7 @@ document.addEventListener('DOMContentLoaded', async function() {
   }
 
   async function refreshDataPeriodically() {
-    if (timerInterval) return; // Don't refresh if timer is active
+    if (timerState === 'running') return; // Don't refresh if timer is active
     const dateString = getTodayDateString();
     const summaryData = await fetchData(`/api/daily-summary?date=${dateString}`);
     if (!summaryData) return;
@@ -122,99 +201,296 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Potentially update notes and activity log if needed, or assume they are managed by user actions mostly
   }
   
-  // --- Timer Functions ---
-  function startTimer() {
-    if (currentSelectedTaskId === null) {
-      showNotification('Please select a task first.', 'warning');
-      return;
-    }
-    const task = getTaskById(currentSelectedTaskId);
-    if (!task || task.status === 'completed') {
-        showNotification('Cannot start a completed task or task not found.', 'warning');
-        return;
-    }
+  // --- Timer Functions (Server-Side) ---
+  function generateSessionId() {
+    return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+  }
 
-    if (timerIsPaused) { // Resuming
-      timerStartTime = Date.now() - accumulatedPausedTime;
-      timerIsPaused = false;
-    } else { // Starting new or switching
-      timerStartTime = Date.now();
-      accumulatedPausedTime = 0;
-      addActivityLog(`Started working on: ${task.title}`, task.id);
-      updateTaskStatusOnBackend(task.id, 'in-progress', task.time_spent); // time_spent doesn't change yet
+  async function startTimer() {
+    try {
+      if (currentSelectedTaskId === null) {
+        showNotification('Please select a task first.', 'warning');
+        return;
+      }
+      
+      const task = getTaskById(currentSelectedTaskId);
+      if (!task || task.status === 'completed') {
+          showNotification('Cannot start a completed task or task not found.', 'warning');
+          return;
+      }
+
+      // Only allow timer for today's tasks
+      if (getCurrentViewDateString() !== getTodayDateString()) {
+        showNotification('You can only start timers for today\'s tasks.', 'warning');
+        return;
+      }
+
+      // Generate new session ID
+      currentSessionId = generateSessionId();
+      
+      // Start timer on server
+      const result = await fetchData('/api/timer/start', 'POST', {
+        task_id: currentSelectedTaskId,
+        session_id: currentSessionId
+      });
+      
+      if (!result) {
+        showNotification('Failed to start timer. Please try again.', 'error');
+        return;
+      }
+      
+      if (result.status === 'success') {
+        timerState = 'running';
+        
+        // Update local task state
+        task.status = 'in-progress';
+        
+        // Start display update interval
+        clearInterval(timerInterval);
+        timerInterval = setInterval(updateTimerDisplay, 1000);
+        
+        // Start server sync interval
+        clearInterval(serverSyncInterval);
+        serverSyncInterval = setInterval(syncTimerWithServer, 30000); // Sync every 30 seconds
+        
+        // Update UI
+        if (startBtn) startBtn.disabled = true;
+        if (pauseBtn) pauseBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = false;
+        if (taskOptionsContainer) {
+          taskOptionsContainer.querySelectorAll('.task-option').forEach(opt => opt.style.pointerEvents = 'none');
+        }
+        
+        // Log activity
+        addActivityLog(`Started working on: ${task.title}`, task.id);
+        
+        showNotification('Timer started!');
+        updateAllStats();
+      } else {
+        showNotification(result.error || 'Failed to start timer', 'error');
+      }
+    } catch (error) {
+      console.error('Error starting timer:', error);
+      showNotification('An error occurred while starting the timer.', 'error');
     }
-    
-    clearInterval(timerInterval); // Clear any existing interval
-    timerInterval = setInterval(updateTimerDisplay, 1000);
-    
-    startBtn.disabled = true;
-    pauseBtn.disabled = false;
-    stopBtn.disabled = false;
-    taskOptionsContainer.querySelectorAll('.task-option').forEach(opt => opt.style.pointerEvents = 'none');
   }
   
-  function pauseTimer() {
-    if (!timerInterval) return;
-    clearInterval(timerInterval);
-    accumulatedPausedTime = Date.now() - timerStartTime;
-    timerIsPaused = true;
-    
-    startBtn.disabled = false;
-    pauseBtn.disabled = true;
-    
-    const task = getTaskById(currentSelectedTaskId);
-    if (task) {
-        addActivityLog(`Paused task: ${task.title}`, task.id);
+  async function pauseTimer() {
+    try {
+      if (timerState !== 'running' || !currentSelectedTaskId || !currentSessionId) {
+        showNotification('No active timer to pause.', 'warning');
+        return;
+      }
+      
+      const result = await fetchData('/api/timer/pause', 'POST', {
+        task_id: currentSelectedTaskId,
+        session_id: currentSessionId
+      });
+      
+      if (!result) {
+        showNotification('Failed to pause timer. Please try again.', 'error');
+        return;
+      }
+      
+      if (result.status === 'success') {
+        timerState = 'paused';
+        
+        // Update local task state
+        const task = getTaskById(currentSelectedTaskId);
+        if (task) {
+          task.status = 'paused';
+          task.time_spent = result.time_spent;
+          addActivityLog(`Paused task: ${task.title}`, task.id);
+        }
+        
+        // Stop intervals
+        clearInterval(timerInterval);
+        clearInterval(serverSyncInterval);
+        
+        // Update UI
+        if (startBtn) startBtn.disabled = false;
+        if (pauseBtn) pauseBtn.disabled = true;
+        if (taskOptionsContainer) {
+          taskOptionsContainer.querySelectorAll('.task-option').forEach(opt => opt.style.pointerEvents = 'auto');
+        }
+        
+        showNotification(`Timer paused! Session time: ${formatDuration(result.elapsed_in_session)}`);
+        updateAllStats();
+      } else {
+        showNotification(result.error || 'Failed to pause timer', 'error');
+      }
+    } catch (error) {
+      console.error('Error pausing timer:', error);
+      showNotification('An error occurred while pausing the timer.', 'error');
     }
   }
   
   async function stopTimer() {
-    if (!timerInterval && !timerIsPaused) return; // Nothing to stop if not running or paused
-
-    clearInterval(timerInterval);
-    timerInterval = null;
-
-    const task = getTaskById(currentSelectedTaskId);
-    if (!task) {
-        resetTimerUI();
+    try {
+      if (timerState === 'stopped' || !currentSelectedTaskId || !currentSessionId) {
+        showNotification('No active timer to stop.', 'warning');
         return;
-    }
+      }
 
-    const elapsedTimeInSegment = timerIsPaused ? accumulatedPausedTime : (Date.now() - timerStartTime);
-    task.time_spent += elapsedTimeInSegment;
+      const result = await fetchData('/api/timer/stop', 'POST', {
+        task_id: currentSelectedTaskId,
+        session_id: currentSessionId
+      });
+      
+      if (!result) {
+        showNotification('Failed to stop timer. Please try again.', 'error');
+        return;
+      }
+      
+      if (result.status === 'success') {
+        const task = getTaskById(currentSelectedTaskId);
+        if (task) {
+          task.status = 'completed';
+          task.time_spent = result.time_spent;
+        }
+        
+        showNotification(`Task completed! Total time: ${formatDuration(result.time_spent)}`);
+        resetTimerUI();
+        updateAllStats();
+      } else {
+        showNotification(result.error || 'Failed to stop timer', 'error');
+      }
+    } catch (error) {
+      console.error('Error stopping timer:', error);
+      showNotification('An error occurred while stopping the timer.', 'error');
+    }
+  }
+
+  async function syncTimerWithServer() {
+    if (timerState !== 'running' || !currentSelectedTaskId || !currentSessionId) return;
     
-    await updateTaskStatusOnBackend(task.id, 'completed', task.time_spent);
-    addActivityLog(`Completed task: ${task.title} (Total: ${formatDuration(task.time_spent)})`, task.id);
-    showNotification(`Task completed! Time: ${formatDuration(elapsedTimeInSegment)}`);
+    const result = await fetchData('/api/timer/sync', 'POST', {
+      task_id: currentSelectedTaskId,
+      session_id: currentSessionId
+    });
     
-    resetTimerUI();
-    updateAllStats(); // This will re-render schedule, options, etc.
+    if (!result) return;
+    
+    if (result.status === 'session_invalid') {
+      showNotification('Timer session expired. Please restart the timer.', 'warning');
+      resetTimerUI();
+      return;
+    }
+    
+    if (result.status === 'success') {
+      // Update local display with server data
+      const task = getTaskById(currentSelectedTaskId);
+      if (task) {
+        task.time_spent = result.time_spent;
+        task.status = result.task_status;
+        
+        // Update timer display
+        timerDisplay.textContent = formatTime(result.total_display_time);
+      }
+    }
   }
 
   function resetTimerUI() {
+    timerState = 'stopped';
+    currentSessionId = null;
+    
+    // Clear intervals
+    clearInterval(timerInterval);
+    clearInterval(serverSyncInterval);
+    
+    // Reset display
     timerDisplay.textContent = formatTime(0);
     currentSelectedTaskId = null;
     currentTaskLabel.textContent = 'No active task';
-    timerStartTime = 0;
-    accumulatedPausedTime = 0;
-    timerIsPaused = false;
     
+    // Reset buttons
     startBtn.disabled = false;
     pauseBtn.disabled = true;
     stopBtn.disabled = true;
+    
+    // Re-enable task selection
     taskOptionsContainer.querySelectorAll('.task-option').forEach(opt => opt.style.pointerEvents = 'auto');
     document.querySelectorAll('.task-option.selected').forEach(el => el.classList.remove('selected'));
     document.querySelectorAll('.schedule-row.current-task').forEach(el => el.classList.remove('current-task'));
-
   }
 
-  function updateTimerDisplay() {
-    if (!timerStartTime || currentSelectedTaskId === null) return;
-    const currentElapsedTimeInSegment = Date.now() - timerStartTime;
-    const task = getTaskById(currentSelectedTaskId);
-    if (!task) return;
-    const totalDisplayTime = task.time_spent + currentElapsedTimeInSegment;
-    timerDisplay.textContent = formatTime(totalDisplayTime);
+  async function updateTimerDisplay() {
+    if (timerState !== 'running' || !currentSelectedTaskId) {
+      // If timer is not running, just display current task time
+      const task = getTaskById(currentSelectedTaskId);
+      if (task && timerDisplay) {
+        timerDisplay.textContent = formatTime(task.time_spent || 0);
+      }
+      return;
+    }
+    
+    try {
+      // Get current timer status from server
+      const result = await fetchData(`/api/timer/status/${currentSelectedTaskId}`);
+      
+      if (!result) return;
+      
+      if (result.session_id !== currentSessionId) {
+        showNotification('Timer session is no longer valid.', 'warning');
+        resetTimerUI();
+        return;
+      }
+      
+      // Update display with server-calculated time
+      if (timerDisplay) {
+        timerDisplay.textContent = formatTime(result.total_display_time);
+      }
+      
+      // Update local task data
+      const task = getTaskById(currentSelectedTaskId);
+      if (task) {
+        task.time_spent = result.time_spent;
+        task.status = result.status;
+      }
+    } catch (error) {
+      console.error('Error updating timer display:', error);
+    }
+  }
+
+  // Resume timer functionality - check for existing running timers on page load
+  async function checkForRunningTimer() {
+    try {
+      const dateString = getTodayDateString();
+      const summaryData = await fetchData(`/api/daily-summary?date=${dateString}`);
+      
+      if (!summaryData || !summaryData.tasks) return;
+      
+      // Find any task with in-progress status and active timer
+      const runningTask = summaryData.tasks.find(task => 
+        task.status === 'in-progress' && task.timer_session_id
+      );
+      
+      if (runningTask) {
+        // Resume the timer
+        currentSelectedTaskId = runningTask.id;
+        currentSessionId = runningTask.timer_session_id;
+        timerState = 'running';
+        
+        // Update UI
+        currentTaskLabel.textContent = runningTask.title;
+        selectTaskForTimer(runningTask.id, false); // Don't start new session
+        
+        // Start intervals
+        clearInterval(timerInterval);
+        timerInterval = setInterval(updateTimerDisplay, 1000);
+        clearInterval(serverSyncInterval);
+        serverSyncInterval = setInterval(syncTimerWithServer, 30000);
+        
+        // Update button states
+        startBtn.disabled = true;
+        pauseBtn.disabled = false;
+        stopBtn.disabled = false;
+        
+        showNotification('Resumed existing timer session!', 'success');
+      }
+    } catch (error) {
+      console.error('Error checking for running timer:', error);
+    }
   }
 
   // --- Data Handling & Rendering ---
@@ -222,8 +498,8 @@ document.addEventListener('DOMContentLoaded', async function() {
     return dailyTasks.find(task => task.id === id);
   }
   
-  function selectTaskForTimer(taskId) {
-    if (timerInterval) { // If a timer is actively running (not just paused)
+  function selectTaskForTimer(taskId, preventNewSession = false) {
+    if (timerState === 'running' && !preventNewSession) {
       showNotification("Please stop or pause the current task before switching.", 'warning');
       return;
     }
@@ -231,16 +507,13 @@ document.addEventListener('DOMContentLoaded', async function() {
     const task = getTaskById(taskId);
     if (!task || task.status === 'completed') {
         showNotification('This task is completed or not found.', 'warning');
-        if (currentSelectedTaskId === taskId) resetTimerUI(); // Clear timer if selected task became completed elsewhere
+        if (currentSelectedTaskId === taskId) resetTimerUI();
         return;
     }
 
     currentSelectedTaskId = taskId;
     currentTaskLabel.textContent = task.title;
-    timerDisplay.textContent = formatTime(task.time_spent); // Display existing time_spent
-    timerIsPaused = false; // Reset pause state for new selection
-    accumulatedPausedTime = 0; // Reset accumulated pause time
-    // timerStartTime will be set when Start is clicked
+    timerDisplay.textContent = formatTime(task.time_spent);
 
     // Update UI for selection
     taskOptionsContainer.querySelectorAll('.task-option').forEach(el => el.classList.remove('selected'));
@@ -251,9 +524,16 @@ document.addEventListener('DOMContentLoaded', async function() {
     const scheduleRowEl = document.getElementById(`scheduleRow-${taskId}`);
     if (scheduleRowEl) scheduleRowEl.classList.add('current-task');
     
-    startBtn.disabled = false;
-    pauseBtn.disabled = true; // Pause only enabled after start
-    stopBtn.disabled = true; // Stop only enabled after start/pause
+    // Update button states based on task status and timer state
+    if (task.status === 'in-progress' && timerState === 'running') {
+      startBtn.disabled = true;
+      pauseBtn.disabled = false;
+      stopBtn.disabled = false;
+    } else if (task.status === 'paused' || timerState === 'stopped') {
+      startBtn.disabled = false;
+      pauseBtn.disabled = true;
+      stopBtn.disabled = true;
+    }
   }
   
   async function updateTaskStatusOnBackend(taskId, status, timeSpent) {
@@ -289,16 +569,18 @@ document.addEventListener('DOMContentLoaded', async function() {
     });
 
     if (sortedTasks.length === 0) {
-        scheduleTableBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 20px;">No tasks scheduled for today. Add one!</td></tr>';
+        scheduleTableBody.innerHTML = '<div class="schedule-loading">No tasks scheduled for today. Add one!</div>';
+        return;
     }
 
     sortedTasks.forEach(task => {
-      const row = document.createElement('tr');
-      row.id = `scheduleRow-${task.id}`;
-      row.className = 'schedule-row';
-      if (task.status === 'in-progress') row.classList.add('current-task');
-      if (task.status === 'completed') row.classList.add('completed-task');
-      if (currentSelectedTaskId === task.id && task.status !== 'completed') row.classList.add('current-task'); // Persist selection highlight
+      const item = document.createElement('div');
+      item.id = `scheduleRow-${task.id}`;
+      item.className = 'schedule-item';
+      if (task.status === 'in-progress') item.classList.add('current-task');
+      if (task.status === 'completed') item.classList.add('completed-task');
+      if (task.status === 'paused') item.classList.add('paused-task');
+      if (currentSelectedTaskId === task.id && task.status !== 'completed') item.classList.add('current-task'); // Persist selection highlight
       
       let timeDisplay = task.start_time || 'Any Time';
       if (task.start_time && task.duration_minutes) {
@@ -313,38 +595,41 @@ document.addEventListener('DOMContentLoaded', async function() {
 
       const isCriticalTask = ['Project Building', 'Targeted Practice', 'Cloud Learning', 'Job Application'].includes(task.title);
 
-      row.innerHTML = `
-        <td class="task-time">${timeDisplay}</td>
-        <td class="task-focus">${isCriticalTask ? `<span class="task-focus-highlight">${task.title}</span>` : task.title}
-            ${task.description ? `<div style="font-size:0.8em; color:var(--secondary-text);">${task.description}</div>` : ''}
-        </td>
-        <td class="task-status"><div id="statusIndicator-${task.id}" class="status-indicator ${task.status}"></div></td>
-        <td class="task-actions">
-            <button class="btn-tiny select-btn" data-task-id="${task.id}" ${task.status === 'completed' ? 'disabled' : ''}>${currentSelectedTaskId === task.id && !timerIsPaused && timerInterval ? 'Selected' : 'Select'}</button>
-            <button class="btn-tiny edit-btn" data-task-id="${task.id}" ${task.status === 'completed' ? 'disabled' : ''} style="margin-left:5px;">Edit</button>
-            <button class="btn-tiny delete-btn" data-task-id="${task.id}" style="margin-left:5px;">Del</button>
-        </td>`;
+      item.innerHTML = `
+        <div class="schedule-item-time">${timeDisplay}</div>
+        <div class="schedule-item-focus">
+          <div class="schedule-item-title">${isCriticalTask ? `<span class="task-focus-highlight">${task.title}</span>` : task.title}</div>
+          ${task.description ? `<div class="schedule-item-description">${task.description}</div>` : ''}
+        </div>
+        <div class="schedule-item-status">
+          <div id="statusIndicator-${task.id}" class="status-indicator ${task.status}"></div>
+        </div>
+        <div class="schedule-item-actions">
+          <button class="btn-tiny select-btn" data-task-id="${task.id}" ${task.status === 'completed' ? 'disabled' : ''}>${currentSelectedTaskId === task.id && !timerIsPaused && timerInterval ? 'Selected' : 'Select'}</button>
+          <button class="btn-tiny edit-btn" data-task-id="${task.id}" ${task.status === 'completed' ? 'disabled' : ''}>Edit</button>
+          <button class="btn-tiny delete-btn" data-task-id="${task.id}">Del</button>
+        </div>`;
       
-      row.querySelector('.select-btn').addEventListener('click', (e) => {
+      item.querySelector('.select-btn').addEventListener('click', (e) => {
           e.stopPropagation(); // Prevent row click if button is distinct
           selectTaskForTimer(task.id);
       });
-      row.querySelector('.edit-btn').addEventListener('click', (e) => {
+      item.querySelector('.edit-btn').addEventListener('click', (e) => {
           e.stopPropagation();
           openEditTaskModal(task.id);
       });
-      row.querySelector('.delete-btn').addEventListener('click', (e) => {
+      item.querySelector('.delete-btn').addEventListener('click', (e) => {
           e.stopPropagation();
           handleDeleteTask(task.id);
       });
 
-      // Optional: Clicking row also selects task IF not completed
-      row.addEventListener('click', () => {
+      // Optional: Clicking item also selects task IF not completed
+      item.addEventListener('click', () => {
         if (task.status !== 'completed') {
             selectTaskForTimer(task.id);
         }
       });
-      scheduleTableBody.appendChild(row);
+      scheduleTableBody.appendChild(item);
     });
   }
   
@@ -361,7 +646,13 @@ document.addEventListener('DOMContentLoaded', async function() {
       option.id = `taskOption-${task.id}`;
       option.className = 'task-option';
       if (currentSelectedTaskId === task.id) option.classList.add('selected');
-      option.textContent = task.title;
+      if (task.status === 'paused') option.classList.add('paused');
+      
+      let displayText = task.title;
+      if (task.status === 'paused') displayText += ' (Paused)';
+      if (task.status === 'in-progress') displayText += ' (Running)';
+      
+      option.textContent = displayText;
       option.addEventListener('click', () => selectTaskForTimer(task.id));
       taskOptionsContainer.appendChild(option);
     });
@@ -623,6 +914,292 @@ document.addEventListener('DOMContentLoaded', async function() {
     }, 3000);
   }
   
+  // --- Notes Functions ---
+  async function loadIndividualNotes() {
+    await loadIndividualNotesForDate(getCurrentViewDateString());
+  }
+  
+  function renderNotesList(notes) {
+    notesList.innerHTML = '';
+    
+    if (!notes || notes.length === 0) {
+      notesList.innerHTML = '<p style="color: var(--secondary-text); font-size: 0.9em; text-align: center; padding: 20px;">No notes for today. Click "Add Note" to create one!</p>';
+      return;
+    }
+    
+    notes.forEach(note => {
+      const noteEl = document.createElement('div');
+      noteEl.className = 'note-item';
+      noteEl.innerHTML = `
+        <div class="note-header">
+          <div class="note-info">
+            ${note.title ? `<h4 class="note-title">${note.title}</h4>` : ''}
+            <span class="note-type note-type-${note.note_type}">${note.note_type}</span>
+            <span class="note-time">${new Date(note.created_at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}</span>
+          </div>
+          <div class="note-actions">
+            <button class="btn-tiny edit-note-btn" data-note-id="${note.id}">Edit</button>
+            <button class="btn-tiny delete-note-btn" data-note-id="${note.id}">Del</button>
+          </div>
+        </div>
+        <div class="note-content">${note.content}</div>
+      `;
+      
+      // Add event listeners for edit and delete
+      noteEl.querySelector('.edit-note-btn').addEventListener('click', () => openEditNoteModal(note.id));
+      noteEl.querySelector('.delete-note-btn').addEventListener('click', () => handleDeleteNote(note.id));
+      
+      notesList.appendChild(noteEl);
+    });
+  }
+  
+  async function handleAddNote(event) {
+    event.preventDefault();
+    
+    // Check if we're in edit mode
+    const editingId = addNoteForm.dataset.editing;
+    if (editingId) {
+      await handleUpdateNote(editingId);
+      return;
+    }
+    
+    const title = document.getElementById('newNoteTitle').value;
+    const content = document.getElementById('newNoteContent').value;
+    const noteType = document.getElementById('newNoteType').value;
+    
+    if (!content.trim()) {
+      showNotification('Note content is required.', 'warning');
+      return;
+    }
+    
+    const noteData = {
+      title: title,
+      content: content,
+      note_type: noteType,
+      entry_date: getCurrentViewDateString()
+    };
+    
+    const result = await fetchData('/api/user-notes', 'POST', noteData);
+    
+    if (result) {
+      showNotification('Note added successfully!');
+      addNoteModal.style.display = 'none';
+      addNoteForm.reset();
+      await loadIndividualNotes(); // Reload notes
+    }
+  }
+  
+  function openEditNoteModal(noteId) {
+    // Find the note data
+    // For simplicity, we'll fetch it from the server
+    fetchData(`/api/user-notes`).then(result => {
+      if (!result || !result.notes) return;
+      
+      const note = result.notes.find(n => n.id === noteId);
+      if (!note) return;
+      
+      // Populate form
+      document.getElementById('editNoteId').value = noteId;
+      document.getElementById('newNoteTitle').value = note.title || '';
+      document.getElementById('newNoteContent').value = note.content;
+      document.getElementById('newNoteType').value = note.note_type;
+      
+      // Change modal state to edit mode
+      addNoteForm.dataset.editing = noteId;
+      
+      document.getElementById('addNoteModalTitle').textContent = "Edit Note";
+      document.getElementById('addNoteSubmitBtn').textContent = "Save Changes";
+      addNoteModal.style.display = 'block';
+    });
+  }
+  
+  async function handleUpdateNote(noteId) {
+    const title = document.getElementById('newNoteTitle').value;
+    const content = document.getElementById('newNoteContent').value;
+    const noteType = document.getElementById('newNoteType').value;
+    
+    if (!content.trim()) {
+      showNotification('Note content is required.', 'warning');
+      return;
+    }
+    
+    const noteData = {
+      title: title,
+      content: content,
+      note_type: noteType
+    };
+    
+    const result = await fetchData(`/api/user-notes/${noteId}`, 'PUT', noteData);
+    
+    if (result) {
+      showNotification('Note updated successfully!');
+      addNoteModal.style.display = 'none';
+      addNoteForm.reset();
+      delete addNoteForm.dataset.editing; // Clear edit mode
+      document.getElementById('addNoteModalTitle').textContent = "Add New Note";
+      document.getElementById('addNoteSubmitBtn').textContent = "Add Note";
+      await loadIndividualNotes(); // Reload notes
+    }
+  }
+  
+  async function handleDeleteNote(noteId) {
+    if (!confirm('Are you sure you want to delete this note?')) return;
+    
+    const result = await fetchData(`/api/user-notes/${noteId}`, 'DELETE');
+    
+    if (result) {
+      showNotification('Note deleted successfully!');
+      await loadIndividualNotes(); // Reload notes
+    }
+  }
+
+  // --- Date Navigation Functions ---
+  async function loadDataForDate(dateString) {
+    const summaryData = await fetchData(`/api/daily-summary?date=${dateString}`);
+    if (!summaryData) return;
+
+    dailyTasks = summaryData.tasks || [];
+    renderActivityLog(summaryData.activityLog);
+    renderStreak(summaryData.streak);
+    
+    renderSchedule();
+    renderTaskOptions();
+    updateDateTime();
+    updateAllStats();
+    
+    // Load individual notes for the selected date
+    await loadIndividualNotesForDate(dateString);
+    
+    // Update date display
+    updateDateDisplay(dateString);
+  }
+  
+  function setupDateNavigation() {
+    if (datePicker) {
+      datePicker.addEventListener('change', async (e) => {
+        const selectedDate = new Date(e.target.value);
+        currentViewDate = selectedDate;
+        await loadDataForDate(getCurrentViewDateString());
+      });
+    }
+    
+    if (prevDateBtn) {
+      prevDateBtn.addEventListener('click', async () => {
+        currentViewDate.setDate(currentViewDate.getDate() - 1);
+        if (datePicker) datePicker.value = getCurrentViewDateString();
+        await loadDataForDate(getCurrentViewDateString());
+      });
+    }
+    
+    if (nextDateBtn) {
+      nextDateBtn.addEventListener('click', async () => {
+        currentViewDate.setDate(currentViewDate.getDate() + 1);
+        if (datePicker) datePicker.value = getCurrentViewDateString();
+        await loadDataForDate(getCurrentViewDateString());
+      });
+    }
+  }
+  
+  function updateDateDisplay(dateString) {
+    const date = new Date(dateString);
+    const isToday = dateString === getTodayDateString();
+    
+    const options = { 
+      weekday: 'long', 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    };
+    
+    let displayText = date.toLocaleDateString(undefined, options);
+    if (isToday) {
+      displayText += ' (Today)';
+    }
+    
+    if (currentDateEl) {
+      currentDateEl.textContent = displayText;
+    }
+  }
+  
+  async function loadIndividualNotesForDate(dateString) {
+    const result = await fetchData(`/api/user-notes?date=${dateString}`);
+    
+    if (!result) return;
+    
+    renderNotesList(result.notes);
+  }
+
+  // --- Theme Toggle Functions ---
+  function toggleFocusMode() {
+    focusModeActive = !focusModeActive;
+    
+    if (focusModeActive) {
+      exitLightTheme();
+    } else {
+      enterLightTheme();
+    }
+  }
+  
+  function enterLightTheme() {
+    // Add light theme class to body
+    document.body.classList.add('light-mode');
+    
+    // Update toggle appearance (OFF for light theme)
+    if (focusModeToggle) {
+      focusModeToggle.classList.remove('active');
+    }
+    
+    // Save theme preference
+    localStorage.setItem('darkTheme', 'false');
+    
+    // Trigger storage event for other pages
+    window.dispatchEvent(new StorageEvent('storage', {
+      key: 'darkTheme',
+      newValue: 'false'
+    }));
+    
+    if (typeof showNotification === 'function') {
+      showNotification('Light theme activated!', 'success');
+    }
+  }
+  
+  function exitLightTheme() {
+    // Remove light theme class from body (back to dark)
+    document.body.classList.remove('light-mode');
+    
+    // Update toggle appearance (ON for dark theme)
+    if (focusModeToggle) {
+      focusModeToggle.classList.add('active');
+    }
+    
+    // Save theme preference
+    localStorage.setItem('darkTheme', 'true');
+    
+    // Trigger storage event for other pages
+    window.dispatchEvent(new StorageEvent('storage', {
+      key: 'darkTheme',
+      newValue: 'true'
+    }));
+    
+    if (typeof showNotification === 'function') {
+      showNotification('Dark theme activated!', 'success');
+    }
+  }
+  
+  // Initialize theme based on saved preference
+  function initializeTheme() {
+    const savedTheme = localStorage.getItem('darkTheme');
+    
+    // Default to dark theme if no preference saved
+    if (savedTheme === 'false') {
+      focusModeActive = false;
+      enterLightTheme();
+    } else {
+      focusModeActive = true;
+      exitLightTheme();
+    }
+  }
+
   // --- Start the Application ---
   initApp();
 });

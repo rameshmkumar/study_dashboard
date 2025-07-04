@@ -7,12 +7,17 @@
     <div class="header">
       <div class="logo">
         <div class="logo-dot"></div>
-        <span>FocusFlo</span>
+        <span>FocusFlow</span>
         <span style="color: var(--accent-color)">.</span>
       </div>
-      <div class="date-display" id="currentDate">Loading date...</div>
+      <div class="date-navigation">
+        <button class="btn-tiny" id="prevDateBtn">‹</button>
+        <input type="date" id="datePicker" class="date-picker" />
+        <button class="btn-tiny" id="nextDateBtn">›</button>
+        <div class="date-display" id="currentDate">Loading date...</div>
+      </div>
       <div class="focus-mode-toggle" id="focusModeToggle">
-        <span>Focus Mode</span>
+        <span>Dark Theme</span>
         <div class="toggle-switch"></div>
       </div>
     </div>
@@ -88,12 +93,14 @@
         
         <div class="card">
            <div class="card-header">
-            <h2 class="card-title">Daily Notes</h2>
+            <h2 class="card-title">Notes</h2>
+            <button class="btn btn-sm" id="addNoteBtn" style="padding: 8px 16px; font-size: 14px;">+ Add Note</button>
           </div>
-          <div class="notes-container">
-            <textarea id="dailyNotes" class="notes-input" placeholder="Add your notes, ideas, or reflections for today..."></textarea>
-            <div class="save-notes">
-              <button class="btn btn-secondary" id="saveNotesBtn">Save Notes</button>
+          
+          <!-- Individual Notes List -->
+          <div class="notes-list-container" id="notesListContainer">
+            <div id="notesList">
+              <!-- Notes will be loaded here -->
             </div>
           </div>
         </div>
@@ -108,19 +115,17 @@
                 <button class="btn btn-sm" id="addTaskBtn" style="padding: 8px 16px; font-size: 14px;">+ Add Task</button>
             </div>
           </div>
-          <table class="schedule-table" id="scheduleTable">
-            <thead>
-              <tr>
-                <th width="20%">Time</th>
-                <th width="45%">Focus & Description</th>
-                <th width="10%" style="text-align: center;">Status</th>
-                <th width="25%" style="text-align: right;">Actions</th>
-              </tr>
-            </thead>
-            <tbody id="scheduleTableBody">
-              <tr><td colspan="4" style="text-align:center; padding: 20px; color: var(--secondary-text);">Loading schedule...</td></tr>
-            </tbody>
-          </table>
+          <div class="schedule-container" id="scheduleContainer">
+            <div class="schedule-header">
+              <div class="schedule-col time-col">Time</div>
+              <div class="schedule-col focus-col">Focus & Description</div>
+              <div class="schedule-col status-col">Status</div>
+              <div class="schedule-col actions-col">Actions</div>
+            </div>
+            <div class="schedule-body" id="scheduleTableBody">
+              <div class="schedule-loading">Loading schedule...</div>
+            </div>
+          </div>
         </div>
         
         <div class="card">
@@ -171,6 +176,37 @@
                     <input type="number" id="newTaskDuration" name="duration_minutes" class="form-control" min="1" step="1">
                 </div>
                 <button type="submit" id="addTaskSubmitBtn" class="btn btn-submit">Add Task</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add/Edit Note Modal -->
+    <div id="addNoteModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="addNoteModalTitle">Add New Note</h2>
+                <span class="close-btn" id="closeAddNoteModalBtn">×</span>
+            </div>
+            <form id="addNoteForm">
+                <input type="hidden" id="editNoteId" value="">
+                <div class="form-group">
+                    <label for="newNoteTitle">Title (Optional)</label>
+                    <input type="text" id="newNoteTitle" name="title" class="form-control" placeholder="Note title...">
+                </div>
+                <div class="form-group">
+                    <label for="newNoteType">Type</label>
+                    <select id="newNoteType" name="note_type" class="form-control">
+                        <option value="general">General</option>
+                        <option value="reflection">Reflection</option>
+                        <option value="idea">Idea</option>
+                        <option value="reminder">Reminder</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="newNoteContent">Content</label>
+                    <textarea id="newNoteContent" name="content" class="form-control" rows="5" placeholder="Write your note here..." required></textarea>
+                </div>
+                <button type="submit" id="addNoteSubmitBtn" class="btn btn-submit">Add Note</button>
             </form>
         </div>
     </div>

@@ -63,3 +63,17 @@ dump.rdb
 Pipfile.lock
 # If you use Poetry
 poetry.lock
+
+# Database files (keep schema.sql but ignore database instances)
+*.db
+*.sqlite
+*.sqlite3
+
+# Deployment and production files
+.railway/
+.render/
+
+# Screenshots and temporary files
+*.png
+*.jpg
+*.jpeg

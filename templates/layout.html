@@ -7,6 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     {% block head_extra %}{% endblock %}
     <style>
@@ -37,7 +38,7 @@
         .form-control {
             width: 100%;
             padding: 12px 15px;
-            background-color: rgba(255, 255, 255, 0.05);
+            background-color: var(--glass-bg);
             border: 1px solid var(--glass-border);
             border-radius: 8px;
             color: var(--text-color);
@@ -150,16 +151,17 @@
         .btn-tiny { /* For buttons in schedule rows */
             padding: 4px 8px;
             font-size: 12px;
-            background: rgba(255,255,255,0.1);
+            background: var(--glass-bg);
             color: var(--secondary-text);
-            border: 1px solid rgba(255,255,255,0.2);
+            border: 1px solid var(--glass-border);
             border-radius: 6px;
             cursor: pointer;
         }
-        .btn-tiny:hover { background: rgba(255,255,255,0.2); color: var(--text-color); }
+        .btn-tiny:hover { background: var(--accent-color); color: white; }
         .btn-tiny:disabled {
-            background: rgba(255,255,255,0.05);
-            color: rgba(255,255,255,0.3);
+            background: var(--glass-bg);
+            color: var(--secondary-text);
+            opacity: 0.5;
             cursor: not-allowed;
         }
         .task-actions { text-align: right; }
@@ -170,10 +172,14 @@
         {% if current_user.is_authenticated %}
         <nav class="main-nav">
             <div class="nav-brand">
-                <a href="{{ url_for('dashboard') }}"><span class="logo-dot"></span>FocusFlo<span style="color: var(--accent-color)">.</span></a>
+                <a href="{{ url_for('dashboard') }}"><span class="logo-dot"></span>FocusFlow<span style="color: var(--accent-color)">.</span></a>
             </div>
-            <ul>
+            <button class="mobile-menu-toggle" onclick="toggleMobileMenu()" aria-label="Toggle menu">
+                <i class="fas fa-bars"></i>
+            </button>
+            <ul id="mobile-nav-menu" class="nav-menu">
                 <li><a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint == 'dashboard' else '' }}">Dashboard</a></li>
+                <li><a href="{{ url_for('achievements') }}" class="{{ 'active' if request.endpoint == 'achievements' else '' }}">Achievements</a></li>
                 <li><a href="{{ url_for('profile') }}" class="{{ 'active' if request.endpoint == 'profile' else '' }}">Profile</a></li>
                 <li><a href="{{ url_for('logout') }}">Logout</a></li>
             </ul>
@@ -190,6 +196,64 @@
 
         {% block content %}{% endblock %}
     </div>
+    
+    <script>
+        // Theme system for all pages - syncs with dashboard toggle
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize theme based on saved preference (for pages without toggle)
+            function initializeTheme() {
+                const savedTheme = localStorage.getItem('darkTheme');
+                
+                // Default to dark theme if no preference saved
+                if (savedTheme === 'false') {
+                    document.body.classList.add('light-mode');
+                } else {
+                    document.body.classList.remove('light-mode');
+                }
+            }
+            
+            // Initialize theme on page load
+            initializeTheme();
+            
+            // Listen for theme changes from other pages
+            window.addEventListener('storage', function(e) {
+                if (e.key === 'darkTheme') {
+                    initializeTheme();
+                }
+            });
+        });
+
+        // Mobile menu toggle function
+        function toggleMobileMenu() {
+            const menu = document.getElementById('mobile-nav-menu');
+            const toggle = document.querySelector('.mobile-menu-toggle i');
+            
+            if (menu) {
+                menu.classList.toggle('mobile-menu-open');
+                
+                // Change hamburger to X when open
+                if (menu.classList.contains('mobile-menu-open')) {
+                    toggle.className = 'fas fa-times';
+                } else {
+                    toggle.className = 'fas fa-bars';
+                }
+            }
+        }
+
+        // Close mobile menu when clicking outside
+        document.addEventListener('click', function(event) {
+            const menu = document.getElementById('mobile-nav-menu');
+            const toggle = document.querySelector('.mobile-menu-toggle');
+            
+            if (menu && menu.classList.contains('mobile-menu-open')) {
+                if (!menu.contains(event.target) && !toggle.contains(event.target)) {
+                    menu.classList.remove('mobile-menu-open');
+                    document.querySelector('.mobile-menu-toggle i').className = 'fas fa-bars';
+                }
+            }
+        });
+    </script>
+    
     {% block scripts %}{% endblock %}
 </body>
 </html>

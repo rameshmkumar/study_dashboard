@@ -1,43 +1,723 @@
 {% extends "layout.html" %}
 
-{% block title %}Your Profile - FocusFlow{% endblock %}
+{% block title %}Profile - FocusFlow{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+{% endblock %}
 
 {% block content %}
-<div class="auth-container" style="max-width: 600px;">
-    <h1>Your Profile</h1>
-    
-    <div class="profile-info">
-        <h3>Account Details</h3>
-        <p><strong>Username:</strong> {{ user.username }}</p>
-        <p><strong>Email:</strong> {{ user.email }}</p>
-        <p><strong>Joined:</strong> {{ user.created_at.strftime('%B %d, %Y') if user.created_at else 'N/A' }}</p>
-        <!-- Add more stats here later if desired, e.g., total tasks completed, longest streak -->
+<div class="profile-container">
+    <!-- Profile Header -->
+    <div class="profile-header">
+        <div class="profile-avatar">
+            <div class="avatar-circle">
+                <i class="fas fa-user"></i>
+            </div>
+        </div>
+        <div class="profile-info">
+            <h1 class="profile-name">{{ user.username }}</h1>
+            <p class="profile-email">{{ user.email }}</p>
+            <p class="profile-joined">
+                <i class="fas fa-calendar-alt"></i>
+                Joined {{ user.created_at.strftime('%B %d, %Y') if user.created_at else 'N/A' }}
+            </p>
+        </div>
+        <div class="profile-stats-preview">
+            <div class="stat-preview">
+                <span class="stat-number" id="profileTotalTasks">--</span>
+                <span class="stat-label">Total Tasks</span>
+            </div>
+            <div class="stat-preview">
+                <span class="stat-number" id="profileCurrentStreak">--</span>
+                <span class="stat-label">Current Streak</span>
+            </div>
+        </div>
     </div>
 
-    <h3 style="font-family: 'Space Grotesk', sans-serif; margin-bottom:20px; margin-top: 30px; color: var(--text-color);">Change Password</h3>
-    <form method="POST" action="{{ url_for('profile') }}">
-        <div class="form-group">
-            <label for="current_password">Current Password</label>
-            <input type="password" id="current_password" name="current_password" class="form-control" required autocomplete="current-password">
+    <!-- Profile Content Grid -->
+    <div class="profile-grid">
+        <!-- Productivity Overview -->
+        <div class="profile-card stats-card">
+            <div class="card-header">
+                <h2><i class="fas fa-chart-bar" style="color: #3b82f6;"></i> Productivity Overview</h2>
+            </div>
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <div class="stat-icon"><i class="fas fa-tasks" style="color: #10b981;"></i></div>
+                    <div class="stat-content">
+                        <span class="stat-value" id="completedTasks">--</span>
+                        <span class="stat-text">Completed Tasks</span>
+                    </div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-icon"><i class="fas fa-clock" style="color: #f59e0b;"></i></div>
+                    <div class="stat-content">
+                        <span class="stat-value" id="totalHours">--h</span>
+                        <span class="stat-text">Focus Time</span>
+                    </div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-icon"><i class="fas fa-fire" style="color: #ef4444;"></i></div>
+                    <div class="stat-content">
+                        <span class="stat-value" id="longestStreak">--</span>
+                        <span class="stat-text">Longest Streak</span>
+                    </div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-icon"><i class="fas fa-trophy" style="color: #fbbf24;"></i></div>
+                    <div class="stat-content">
+                        <span class="stat-value" id="achievementsCount">--</span>
+                        <span class="stat-text">Achievements</span>
+                    </div>
+                </div>
+            </div>
         </div>
-        <div class="form-group">
-            <label for="new_password">New Password</label>
-            <input type="password" id="new_password" name="new_password" class="form-control" minlength="6" required autocomplete="new-password">
-        </div>
-        <div class="form-group">
-            <label for="confirm_password">Confirm New Password</label>
-            <input type="password" id="confirm_password" name="confirm_password" class="form-control" required autocomplete="new-password">
-        </div>
-        <button type="submit" class="btn btn-submit">Update Password</button>
-    </form>
 
-    <!-- Optional: Delete Account Section -->
-    <!--
-    <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--glass-border);">
-        <h3 style="font-family: 'Space Grotesk', sans-serif; margin-bottom:10px; color: var(--danger-color);">Danger Zone</h3>
-        <p style="color: var(--secondary-text); margin-bottom:15px;">Deleting your account is permanent and cannot be undone.</p>
-        <button class="btn btn-danger" onclick="if(confirm('Are you absolutely sure you want to delete your account? This action is irreversible.')) { /* Call delete account endpoint */ }">Delete My Account</button>
+        <!-- Recent Achievements -->
+        <div class="profile-card achievements-card">
+            <div class="card-header">
+                <h2><i class="fas fa-medal" style="color: #fbbf24;"></i> Recent Achievements</h2>
+            </div>
+            <div id="recentAchievements" class="achievements-list">
+                <div class="loading-text">Loading achievements...</div>
+            </div>
+        </div>
+
+        <!-- Account Settings -->
+        <div class="profile-card settings-card">
+            <div class="card-header">
+                <h2><i class="fas fa-cog" style="color: #6b7280;"></i> Account Settings</h2>
+            </div>
+            <div class="settings-content">
+                <div class="setting-group">
+                    <h3>Account Information</h3>
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <span class="setting-label">Username</span>
+                            <span class="setting-value">{{ user.username }}</span>
+                        </div>
+                        <button class="btn-edit" onclick="editUsername()">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <span class="setting-label">Email</span>
+                            <span class="setting-value">{{ user.email }}</span>
+                        </div>
+                        <button class="btn-edit" onclick="editEmail()">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="setting-group">
+                    <h3>Preferences</h3>
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <span class="setting-label">Theme</span>
+                            <span class="setting-value">Auto (System)</span>
+                        </div>
+                        <div class="theme-toggle">
+                            <button class="btn-theme" onclick="setTheme('light')">Light</button>
+                            <button class="btn-theme active" onclick="setTheme('auto')">Auto</button>
+                            <button class="btn-theme" onclick="setTheme('dark')">Dark</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Security Settings -->
+        <div class="profile-card security-card">
+            <div class="card-header">
+                <h2><i class="fas fa-shield-alt" style="color: #8b5cf6;"></i> Security</h2>
+            </div>
+            <div class="security-content">
+                <form method="POST" action="{{ url_for('profile') }}" class="password-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                    <div class="form-group">
+                        <label for="current_password">Current Password</label>
+                        <input type="password" id="current_password" name="current_password" class="form-control" required autocomplete="current-password">
+                    </div>
+                    <div class="form-group">
+                        <label for="new_password">New Password</label>
+                        <input type="password" id="new_password" name="new_password" class="form-control" minlength="8" required autocomplete="new-password">
+                        <small style="font-size: 0.8em; color: var(--secondary-text);">
+                            Password must contain uppercase, lowercase, number, and special character (!@#$%^&*)
+                        </small>
+                    </div>
+                    <div class="form-group">
+                        <label for="confirm_password">Confirm New Password</label>
+                        <input type="password" id="confirm_password" name="confirm_password" class="form-control" required autocomplete="new-password">
+                    </div>
+                    <button type="submit" class="btn-primary">Update Password</button>
+                </form>
+
+                <div class="security-info">
+                    <div class="security-item">
+                        <i class="fas fa-check-circle" style="color: #10b981;"></i>
+                        <span>Password last changed: Never</span>
+                    </div>
+                    <div class="security-item">
+                        <i class="fas fa-shield-check" style="color: #10b981;"></i>
+                        <span>Account security: Strong</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Activity Timeline -->
+        <div class="profile-card activity-card">
+            <div class="card-header">
+                <h2><i class="fas fa-history" style="color: #3b82f6;"></i> Recent Activity</h2>
+            </div>
+            <div id="activityTimeline" class="activity-timeline">
+                <div class="loading-text">Loading activity...</div>
+            </div>
+        </div>
+
+        <!-- Danger Zone -->
+        <div class="profile-card danger-card">
+            <div class="card-header">
+                <h2><i class="fas fa-exclamation-triangle" style="color: #ef4444;"></i> Danger Zone</h2>
+            </div>
+            <div class="danger-content">
+                <div class="danger-warning">
+                    <p>Deleting your account is permanent and cannot be undone. All your data will be lost.</p>
+                </div>
+                <button class="btn-danger" onclick="confirmDeleteAccount()">
+                    <i class="fas fa-trash"></i>
+                    Delete Account
+                </button>
+            </div>
+        </div>
     </div>
-    -->
 </div>
+
+<style>
+.profile-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.profile-header {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    margin-bottom: 40px;
+    padding: 32px;
+    background: linear-gradient(145deg, var(--card-bg), var(--card-gradient));
+    border-radius: var(--border-radius);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--card-shadow);
+}
+
+.profile-avatar {
+    flex-shrink: 0;
+}
+
+.avatar-circle {
+    width: 80px;
+    height: 80px;
+    background: linear-gradient(135deg, var(--accent-color), var(--accent-light));
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+    color: white;
+}
+
+.profile-info {
+    flex: 1;
+}
+
+.profile-name {
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--text-color);
+    font-family: 'Space Grotesk', sans-serif;
+    margin-bottom: 8px;
+}
+
+.profile-email {
+    font-size: 16px;
+    color: var(--secondary-text);
+    margin-bottom: 8px;
+}
+
+.profile-joined {
+    font-size: 14px;
+    color: var(--secondary-text);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.profile-stats-preview {
+    display: flex;
+    gap: 32px;
+}
+
+.stat-preview {
+    text-align: center;
+}
+
+.stat-preview .stat-number {
+    display: block;
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--accent-color);
+    font-family: 'Space Grotesk', sans-serif;
+}
+
+.stat-preview .stat-label {
+    font-size: 12px;
+    color: var(--secondary-text);
+    margin-top: 4px;
+}
+
+.profile-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 24px;
+}
+
+.profile-card {
+    background: linear-gradient(145deg, var(--card-bg), var(--card-gradient));
+    border-radius: var(--border-radius);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--card-shadow);
+    overflow: hidden;
+}
+
+.card-header {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.card-header h2 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-color);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+    padding: 24px;
+}
+
+.stat-item {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px;
+    background: var(--glass-bg);
+    border-radius: 12px;
+    border: 1px solid var(--glass-border);
+}
+
+.stat-icon {
+    font-size: 24px;
+}
+
+.stat-content {
+    flex: 1;
+}
+
+.stat-value {
+    display: block;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-color);
+    font-family: 'Space Grotesk', sans-serif;
+}
+
+.stat-text {
+    font-size: 14px;
+    color: var(--secondary-text);
+}
+
+.achievements-list {
+    padding: 24px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.achievement-item {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px;
+    margin-bottom: 12px;
+    background: var(--glass-bg);
+    border-radius: 8px;
+    border: 1px solid var(--glass-border);
+}
+
+.achievement-icon {
+    font-size: 24px;
+}
+
+.achievement-content {
+    flex: 1;
+}
+
+.achievement-name {
+    font-weight: 600;
+    color: var(--text-color);
+    margin-bottom: 4px;
+}
+
+.achievement-desc {
+    font-size: 14px;
+    color: var(--secondary-text);
+}
+
+.settings-content {
+    padding: 24px;
+}
+
+.setting-group {
+    margin-bottom: 32px;
+}
+
+.setting-group h3 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-color);
+    margin-bottom: 16px;
+}
+
+.setting-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px;
+    background: var(--glass-bg);
+    border-radius: 8px;
+    border: 1px solid var(--glass-border);
+    margin-bottom: 12px;
+}
+
+.setting-info {
+    flex: 1;
+}
+
+.setting-label {
+    display: block;
+    font-weight: 600;
+    color: var(--text-color);
+    margin-bottom: 4px;
+}
+
+.setting-value {
+    font-size: 14px;
+    color: var(--secondary-text);
+}
+
+.btn-edit {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: var(--text-color);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-edit:hover {
+    background: var(--accent-color);
+    color: white;
+}
+
+.theme-toggle {
+    display: flex;
+    gap: 8px;
+}
+
+.btn-theme {
+    padding: 6px 12px;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 6px;
+    color: var(--text-color);
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s ease;
+}
+
+.btn-theme.active {
+    background: var(--accent-color);
+    color: white;
+}
+
+.security-content {
+    padding: 24px;
+}
+
+.password-form {
+    margin-bottom: 24px;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--text-color);
+    font-weight: 500;
+}
+
+.form-control {
+    width: 100%;
+    padding: 12px 15px;
+    background-color: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    color: var(--text-color);
+    font-size: 16px;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
+}
+
+.btn-primary {
+    background: var(--accent-color);
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-primary:hover {
+    background: var(--accent-dark);
+}
+
+.security-info {
+    padding-top: 20px;
+    border-top: 1px solid var(--glass-border);
+}
+
+.security-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    font-size: 14px;
+    color: var(--text-color);
+}
+
+.activity-timeline {
+    padding: 24px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.activity-item {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px;
+    margin-bottom: 12px;
+    background: var(--glass-bg);
+    border-radius: 8px;
+    border-left: 4px solid var(--accent-color);
+}
+
+.activity-time {
+    font-size: 12px;
+    color: var(--secondary-text);
+    min-width: 60px;
+}
+
+.activity-desc {
+    flex: 1;
+    color: var(--text-color);
+}
+
+.danger-content {
+    padding: 24px;
+}
+
+.danger-warning {
+    margin-bottom: 20px;
+    padding: 16px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: 8px;
+}
+
+.danger-warning p {
+    color: #ef4444;
+    margin: 0;
+    font-size: 14px;
+}
+
+.btn-danger {
+    background: #ef4444;
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-danger:hover {
+    background: #dc2626;
+}
+
+.loading-text {
+    text-align: center;
+    color: var(--secondary-text);
+    padding: 40px 20px;
+}
+
+@media (max-width: 768px) {
+    .profile-header {
+        flex-direction: column;
+        text-align: center;
+    }
+    
+    .profile-stats-preview {
+        justify-content: center;
+    }
+    
+    .profile-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async function() {
+    await loadProfileData();
+});
+
+async function loadProfileData() {
+    try {
+        // Load user statistics
+        const response = await fetch('/api/profile/stats');
+        if (response.ok) {
+            const data = await response.json();
+            updateProfileStats(data);
+        }
+        
+        // Load achievements
+        loadRecentAchievements();
+        
+        // Load activity timeline
+        loadActivityTimeline();
+    } catch (error) {
+        console.error('Error loading profile data:', error);
+    }
+}
+
+function updateProfileStats(data) {
+    document.getElementById('profileTotalTasks').textContent = data.totalTasks || 0;
+    document.getElementById('profileCurrentStreak').textContent = data.currentStreak || 0;
+    document.getElementById('completedTasks').textContent = data.completedTasks || 0;
+    document.getElementById('totalHours').textContent = (data.totalHours || 0) + 'h';
+    document.getElementById('longestStreak').textContent = data.longestStreak || 0;
+    document.getElementById('achievementsCount').textContent = data.achievementsCount || 0;
+}
+
+async function loadRecentAchievements() {
+    try {
+        const response = await fetch('/api/analytics');
+        if (response.ok) {
+            const data = await response.json();
+            const achievements = data.achievements || [];
+            const recentAchievements = achievements.filter(a => a.unlocked).slice(0, 3);
+            
+            const container = document.getElementById('recentAchievements');
+            if (recentAchievements.length === 0) {
+                container.innerHTML = '<div class="loading-text">No achievements yet. Start completing tasks!</div>';
+                return;
+            }
+            
+            container.innerHTML = recentAchievements.map(achievement => `
+                <div class="achievement-item">
+                    <div class="achievement-icon">${achievement.icon}</div>
+                    <div class="achievement-content">
+                        <div class="achievement-name">${achievement.name}</div>
+                        <div class="achievement-desc">${achievement.description}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+    } catch (error) {
+        console.error('Error loading achievements:', error);
+    }
+}
+
+async function loadActivityTimeline() {
+    const activities = [
+        { time: '2h ago', desc: 'Completed "Review project proposals"' },
+        { time: '5h ago', desc: 'Started focus session (45 min)' },
+        { time: '1d ago', desc: 'Achieved "Productive" milestone' },
+        { time: '2d ago', desc: 'Completed 5 tasks' },
+        { time: '3d ago', desc: 'Started 7-day streak' }
+    ];
+    
+    const container = document.getElementById('activityTimeline');
+    container.innerHTML = activities.map(activity => `
+        <div class="activity-item">
+            <div class="activity-time">${activity.time}</div>
+            <div class="activity-desc">${activity.desc}</div>
+        </div>
+    `).join('');
+}
+
+function editUsername() {
+    alert('Username editing feature coming soon!');
+}
+
+function editEmail() {
+    alert('Email editing feature coming soon!');
+}
+
+function setTheme(theme) {
+    document.querySelectorAll('.btn-theme').forEach(btn => btn.classList.remove('active'));
+    event.target.classList.add('active');
+    // Theme switching logic would go here
+}
+
+function confirmDeleteAccount() {
+    if (confirm('Are you absolutely sure you want to delete your account? This action cannot be undone and all your data will be lost.')) {
+        if (confirm('This is your final warning. Type DELETE to confirm.')) {
+            // Delete account logic would go here
+            alert('Account deletion feature is disabled for safety.');
+        }
+    }
+}
+</script>
 {% endblock %}
