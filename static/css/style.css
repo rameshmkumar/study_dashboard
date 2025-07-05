@@ -56,6 +56,11 @@ body.light-mode {
     radial-gradient(circle at 100% 100%, rgba(139, 92, 246, 0.04) 0%, transparent 30%);
 }
 
+/* Light mode styles for time input */
+body.light-mode input[type="time"].form-control::-webkit-calendar-picker-indicator {
+    filter: invert(0);
+}
+
 .container {
   max-width: 1300px;
   margin: 0 auto;
@@ -67,8 +72,9 @@ body.light-mode {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 36px;
-  padding-bottom: 20px;
+  padding: 0 20px 20px 0;
   border-bottom: 1px solid var(--glass-border);
+  gap: 40px;
 }
 
 .logo {
@@ -76,17 +82,14 @@ body.light-mode {
   font-weight: 700;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 6px;
   font-family: 'Space Grotesk', sans-serif;
   letter-spacing: -0.5px;
 }
 
-.logo-dot {
-  width: 10px;
-  height: 10px;
-  background: linear-gradient(135deg, var(--accent-light), var(--accent-dark));
-  border-radius: 50%;
-  display: inline-block;
+.logo-icon {
+  font-size: 26px;
+  color: var(--accent-color);
   animation: pulse 4s infinite ease-in-out;
 }
 
@@ -94,29 +97,62 @@ body.light-mode {
 .date-navigation {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  padding: 8px 12px;
+}
+
+.date-navigation .btn-tiny {
+  background: transparent;
+  border: none;
+  color: var(--text-color);
+  font-size: 16px;
+  font-weight: 600;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.date-navigation .btn-tiny:hover {
+  background: var(--accent-color);
+  color: white;
+  transform: scale(1.05);
 }
 
 .date-picker {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: 8px;
-  padding: 8px 12px;
+  background: transparent;
+  border: none;
   color: var(--text-color);
   font-size: 14px;
+  font-weight: 500;
+  padding: 4px 8px;
+  min-width: 140px;
+  text-align: center;
 }
 
 .date-picker:focus {
   outline: none;
-  border-color: var(--accent-color);
-  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2);
+  background: rgba(139, 92, 246, 0.1);
+  border-radius: 6px;
 }
 
 .date-display {
-  font-size: 15px;
-  color: var(--secondary-text);
-  font-weight: 400;
-  margin-left: 10px;
+  font-size: 14px;
+  color: var(--text-color);
+  font-weight: 500;
+  white-space: nowrap;
+  background: rgba(139, 92, 246, 0.1);
+  padding: 6px 12px;
+  border-radius: 8px;
+  margin-left: 8px;
 }
 
 .dashboard-grid {
@@ -912,6 +948,37 @@ body.light-mode {
     border-color: var(--accent-color);
     box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
 }
+
+/* Enhanced styling for time input */
+input[type="time"].form-control {
+    cursor: pointer;
+    font-family: 'Outfit', monospace;
+    font-weight: 400;
+    letter-spacing: 0.5px;
+    position: relative;
+}
+
+input[type="time"].form-control::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    filter: invert(1);
+    opacity: 0.7;
+    transition: opacity 0.2s ease;
+}
+
+input[type="time"].form-control::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+}
+
+/* Make the time input more visually appealing when it has a value */
+input[type="time"].form-control:not(:placeholder-shown) {
+    background-color: rgba(139, 92, 246, 0.08);
+    border-color: rgba(139, 92, 246, 0.3);
+}
+
+/* For Firefox support */
+input[type="time"].form-control::-moz-focus-inner {
+    border: 0;
+}
 .btn-submit { /* Specific for form submits */
     width: 100%;
     padding: 12px;
@@ -1608,7 +1675,7 @@ nav.main-nav ul li a:hover, nav.main-nav ul li a.active {
         flex-direction: column;
         align-items: stretch;
         padding: 16px;
-        gap: 12px;
+        gap: 8px;
         text-align: left;
         min-width: auto;
         width: 100%;
@@ -1622,12 +1689,13 @@ nav.main-nav ul li a:hover, nav.main-nav ul li a.active {
         color: var(--accent-color);
         font-size: 14px;
         order: 1;
+        margin-bottom: 8px;
     }
     
     .schedule-item-focus {
         flex: 1;
         min-width: 0;
-        padding: 0;
+        padding: 0 120px 0 0; /* Add right padding to prevent overlap with status/actions */
         order: 2;
     }
     
@@ -1645,6 +1713,7 @@ nav.main-nav ul li a:hover, nav.main-nav ul li a.active {
         white-space: normal;
         overflow: visible;
         text-overflow: initial;
+        margin-bottom: 8px;
     }
     
     .schedule-item-status {
@@ -1654,7 +1723,7 @@ nav.main-nav ul li a:hover, nav.main-nav ul li a.active {
         display: flex;
         justify-content: flex-start;
         order: 3;
-        margin: 8px 0;
+        margin: 0;
     }
     
     .schedule-item-actions {
@@ -1663,9 +1732,51 @@ nav.main-nav ul li a:hover, nav.main-nav ul li a.active {
         padding: 0;
         justify-content: flex-start;
         flex-wrap: wrap;
-        gap: 8px;
-        margin-top: 8px;
+        gap: 6px;
+        margin: 0;
         order: 4;
+    }
+    
+    /* Create a mobile-specific inline layout for status and actions */
+    .schedule-item-focus {
+        position: relative;
+    }
+    
+    .schedule-item-status {
+        position: absolute;
+        top: 0;
+        right: 80px;
+        display: flex;
+        align-items: center;
+        background: var(--card-bg);
+        padding: 6px 8px;
+        border-radius: 8px;
+        border: 1px solid var(--glass-border);
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        margin: 0;
+        order: initial;
+    }
+    
+    .schedule-item-actions {
+        position: absolute;
+        top: 0;
+        right: 0;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        background: var(--card-bg);
+        padding: 2px 4px;
+        border-radius: 8px;
+        border: 1px solid var(--glass-border);
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        margin: 0;
+        order: initial;
+    }
+    
+    .schedule-item-actions .btn-tiny {
+        padding: 4px 6px;
+        font-size: 11px;
+        min-width: auto;
     }
     
     /* Modals */
@@ -1680,26 +1791,53 @@ nav.main-nav ul li a:hover, nav.main-nav ul li a.active {
         font-size: 16px; /* Prevents zoom on iOS */
     }
     
-    /* Notes */
+    /* Notes - Improved Mobile Layout */
     .note-item {
         padding: 16px;
+        position: relative;
     }
     
     .note-header {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 12px;
+        flex-direction: row;
+        align-items: flex-start;
+        gap: 8px;
+        margin-bottom: 8px;
     }
     
     .note-info {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 8px;
+        flex: 1;
+        min-width: 0;
+        padding-right: 80px; /* Space for action buttons */
+    }
+    
+    .note-title {
+        margin-bottom: 6px;
+    }
+    
+    .note-type,
+    .note-time {
+        display: inline-block;
+        margin-right: 8px;
     }
     
     .note-actions {
-        width: 100%;
-        justify-content: flex-start;
+        position: absolute;
+        top: 16px;
+        right: 16px;
+        width: auto;
+        justify-content: flex-end;
+        gap: 4px;
+        background: var(--card-bg);
+        padding: 2px 4px;
+        border-radius: 6px;
+        border: 1px solid var(--glass-border);
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    
+    .note-actions .btn-tiny {
+        padding: 4px 6px;
+        font-size: 11px;
+        min-width: auto;
     }
     
     /* Activity Log */

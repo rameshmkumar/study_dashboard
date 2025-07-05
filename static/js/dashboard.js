@@ -154,8 +154,24 @@ document.addEventListener('DOMContentLoaded', async function() {
     pauseBtn.addEventListener('click', pauseTimer);
     stopBtn.addEventListener('click', stopTimer);
     
-    if(addTaskBtn) addTaskBtn.addEventListener('click', () => addTaskModal.style.display = 'block');
-    if(closeAddTaskModalBtn) closeAddTaskModalBtn.addEventListener('click', () => addTaskModal.style.display = 'none');
+    if(addTaskBtn) addTaskBtn.addEventListener('click', () => {
+      // Set current time as default
+      setCurrentTimeAsDefault();
+      addTaskModal.style.display = 'block';
+      
+      // Make time input fully clickable after a brief delay to ensure modal is rendered
+      setTimeout(() => {
+        setupTimeInputClickHandler();
+      }, 100);
+    });
+    if(closeAddTaskModalBtn) closeAddTaskModalBtn.addEventListener('click', () => {
+      addTaskModal.style.display = 'none';
+      addTaskForm.reset();
+      // Reset modal title and button text in case it was in edit mode
+      document.getElementById('addTaskModalTitle').textContent = "Add New Task";
+      document.getElementById('addTaskSubmitBtn').textContent = "Add Task";
+      addTaskForm.onsubmit = handleAddTask; // Reset to default add handler
+    });
     if(addTaskForm) addTaskForm.addEventListener('submit', handleAddTask);
     
     // Notes event listeners
@@ -178,9 +194,15 @@ document.addEventListener('DOMContentLoaded', async function() {
     window.onclick = function(event) {
         if (event.target == addTaskModal) {
             addTaskModal.style.display = "none";
+            addTaskForm.reset();
+            // Reset modal title and button text in case it was in edit mode
+            document.getElementById('addTaskModalTitle').textContent = "Add New Task";
+            document.getElementById('addTaskSubmitBtn').textContent = "Add Task";
+            addTaskForm.onsubmit = handleAddTask; // Reset to default add handler
         }
         if (event.target == addNoteModal) {
             addNoteModal.style.display = "none";
+            delete addNoteForm.dataset.editing; // Clear edit mode when closing
         }
     }
     
@@ -351,6 +373,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         
         showNotification(`Task completed! Total time: ${formatDuration(result.time_spent)}`);
         resetTimerUI();
+        renderSchedule();
         updateAllStats();
       } else {
         showNotification(result.error || 'Failed to stop timer', 'error');
@@ -811,6 +834,11 @@ document.addEventListener('DOMContentLoaded', async function() {
     document.getElementById('addTaskModalTitle').textContent = "Edit Task"; // Change modal title
     document.getElementById('addTaskSubmitBtn').textContent = "Save Changes"; // Change submit button text
     addTaskModal.style.display = 'block';
+    
+    // Setup time input click handler for edit mode too
+    setTimeout(() => {
+      setupTimeInputClickHandler();
+    }, 100);
   }
 
   async function handleUpdateTask(taskId) {
@@ -873,6 +901,42 @@ document.addEventListener('DOMContentLoaded', async function() {
 
 
   // --- Utility & UI Functions ---
+  function setCurrentTimeAsDefault() {
+    const now = new Date();
+    const currentTime = now.toTimeString().slice(0, 5); // Format as HH:MM
+    const startTimeField = document.getElementById('newTaskStartTime');
+    if (startTimeField) {
+      startTimeField.value = currentTime;
+    }
+  }
+
+  function setupTimeInputClickHandler() {
+    const timeInput = document.getElementById('newTaskStartTime');
+    if (timeInput) {
+      // Remove any existing click handlers to prevent duplicates
+      timeInput.removeEventListener('click', openTimePicker);
+      
+      // Add click handler to make entire field clickable
+      timeInput.addEventListener('click', openTimePicker);
+    }
+  }
+
+  function openTimePicker(event) {
+    // Focus the input and trigger the time picker
+    const timeInput = event.target;
+    timeInput.focus();
+    
+    // Try to show the picker (this works in most modern browsers)
+    if (timeInput.showPicker) {
+      try {
+        timeInput.showPicker();
+      } catch (e) {
+        // Fallback for browsers that don't support showPicker
+        console.log('showPicker not supported, using focus fallback');
+      }
+    }
+  }
+
   function formatTime(milliseconds) {
     if (isNaN(milliseconds) || milliseconds < 0) milliseconds = 0;
     const totalSeconds = Math.floor(milliseconds / 1000);

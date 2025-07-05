@@ -12,7 +12,7 @@
     <div class="nav-container">
         <div class="nav-brand">
             <a href="{{ url_for('home') }}">
-                <span class="logo-dot"></span>FocusFlow<span style="color: var(--accent-color)">.</span>
+                <i class="fas fa-stopwatch logo-icon"></i>FocusFlow
             </a>
         </div>
         <ul class="nav-links">
@@ -28,7 +28,7 @@
     <div class="hero-content">
         <div class="hero-text">
             <h1 class="hero-title">
-                <span class="logo-dot"></span>FocusFlow<span style="color: var(--accent-color)">.</span>
+                <i class="fas fa-stopwatch logo-icon"></i>FocusFlow
             </h1>
             <p class="hero-subtitle">Transform your productivity with focused work sessions, smart time tracking, and comprehensive study analytics.</p>
             <div class="hero-cta">
@@ -164,7 +164,7 @@
             <div class="footer-section">
                 <div class="footer-brand">
                     <a href="{{ url_for('home') }}">
-                        <span class="logo-dot"></span>FocusFlow<span style="color: var(--accent-color)">.</span>
+                        <i class="fas fa-stopwatch logo-icon"></i>FocusFlow
                     </a>
                     <p>Transform your productivity with focused work sessions and smart analytics.</p>
                 </div>
@@ -235,15 +235,14 @@
     font-weight: 700;
     color: var(--text-color);
     text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
 }
 
-.homepage-nav .logo-dot {
-    width: 8px;
-    height: 8px;
-    background: linear-gradient(135deg, var(--accent-light), var(--accent-dark));
-    border-radius: 50%;
-    display: inline-block;
-    margin-right: 8px;
+.homepage-nav .logo-icon {
+    font-size: 22px;
+    color: var(--accent-color);
     animation: pulse 4s infinite ease-in-out;
 }
 
@@ -299,6 +298,16 @@
     color: var(--text-color);
     margin-bottom: 24px;
     font-family: 'Space Grotesk', sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.hero-title .logo-icon {
+    font-size: 3rem;
+    color: var(--accent-color);
+    animation: pulse 4s infinite ease-in-out;
 }
 
 .hero-subtitle {
@@ -565,6 +574,15 @@
     font-weight: 700;
     color: var(--text-color);
     text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.footer-brand .logo-icon {
+    font-size: 18px;
+    color: var(--accent-color);
+    animation: pulse 4s infinite ease-in-out;
 }
 
 .footer-brand p {

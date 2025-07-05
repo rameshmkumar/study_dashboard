@@ -1235,6 +1235,16 @@ def health_check():
             'timestamp': datetime.now().isoformat()
         }), 503
 
+# --- Keep-Alive Endpoint (for uptime monitoring) ---
+@app.route('/ping')
+@limiter.exempt
+def ping():
+    """Simple ping endpoint for uptime monitoring services"""
+    return jsonify({
+        'status': 'ok',
+        'timestamp': datetime.now().isoformat()
+    }), 200
+
 # Note: Rate limiting is applied via decorators on existing routes
 
 if __name__ == '__main__':

@@ -90,10 +90,14 @@
             font-weight: 700;
             color: var(--text-color);
             text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
-        nav.main-nav .nav-brand .logo-dot {
-             width: 8px; height: 8px; background: linear-gradient(135deg, var(--accent-light), var(--accent-dark));
-             border-radius: 50%; display: inline-block; margin-right: 8px; animation: pulse 4s infinite ease-in-out;
+        nav.main-nav .nav-brand .logo-icon {
+            font-size: 22px;
+            color: var(--accent-color);
+            animation: pulse 4s infinite ease-in-out;
         }
         nav.main-nav ul { list-style: none; display: flex; gap: 20px; margin: 0; padding: 0; }
         nav.main-nav ul li a { color: var(--secondary-text); text-decoration: none; font-weight: 500; transition: color 0.2s ease; }
@@ -172,7 +176,7 @@
         {% if current_user.is_authenticated %}
         <nav class="main-nav">
             <div class="nav-brand">
-                <a href="{{ url_for('dashboard') }}"><span class="logo-dot"></span>FocusFlow<span style="color: var(--accent-color)">.</span></a>
+                <a href="{{ url_for('dashboard') }}"><i class="fas fa-stopwatch logo-icon"></i>FocusFlow</a>
             </div>
             <button class="mobile-menu-toggle" onclick="toggleMobileMenu()" aria-label="Toggle menu">
                 <i class="fas fa-bars"></i>
