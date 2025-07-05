@@ -207,6 +207,23 @@ def init_db_command():
     init_db()
     # No print needed here as init_db() already prints
 
+# Auto-initialize database on startup (for production deployments)
+def ensure_database_initialized():
+    """Ensure database is initialized on app startup"""
+    if not os.path.exists(DATABASE):
+        print(f"Database at {DATABASE} not found. Auto-initializing...")
+        try:
+            with app.app_context():
+                init_db()
+            print("Database auto-initialization completed successfully.")
+        except Exception as e:
+            print(f"Error during database auto-initialization: {e}")
+            # Don't crash the app, but log the error
+            app.logger.error(f"Database initialization failed: {e}")
+
+# Initialize database on import (when gunicorn starts the app)
+ensure_database_initialized()
+
 # --- User Model for Flask-Login ---
 class User(UserMixin):
     def __init__(self, id, username, email, password_hash, created_at=None): # Added created_at
