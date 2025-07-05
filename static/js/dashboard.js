@@ -9,6 +9,11 @@ document.addEventListener('DOMContentLoaded', async function() {
   let currentViewDate = new Date(); // Current date being viewed
   let focusModeActive = false; // Focus mode state
 
+  // --- Client-Side Timer Variables (Quick Fix for Scalability) ---
+  let clientTimerStartTime = null; // When timer started (client-side)
+  let baseTimeSpent = 0; // Base time from server when timer started
+  let lastSyncTime = null; // Last time we synced with server
+
   // DOM elements
   const timerDisplay = document.getElementById('timerDisplay');
   const startBtn = document.getElementById('startBtn');
@@ -49,6 +54,57 @@ document.addEventListener('DOMContentLoaded', async function() {
   // Focus mode toggle
   const focusModeToggle = document.getElementById('focusModeToggle');
 
+  // --- Client-Side Timer Functions (Quick Fix for Scalability) ---
+  function getCurrentElapsedTime() {
+    if (timerState !== 'running' || !clientTimerStartTime) {
+      return baseTimeSpent;
+    }
+    // Calculate elapsed time since timer started
+    const elapsed = Date.now() - clientTimerStartTime;
+    return baseTimeSpent + elapsed;
+  }
+  
+  // Sync timer with server data when tab becomes visible
+  function syncTimerFromServer() {
+    if (timerState !== 'running' || !currentSelectedTaskId) return;
+    
+    fetchData(`/api/daily-summary?date=${getTodayDateString()}`)
+      .then(summaryData => {
+        if (!summaryData || !summaryData.tasks) return;
+        
+        const runningTask = summaryData.tasks.find(task => 
+          task.id === currentSelectedTaskId && task.status === 'in-progress' && task.timer_session_id
+        );
+        
+        if (runningTask && runningTask.timer_start_time) {
+          // Recalculate elapsed time from server data
+          const timerStartTime = new Date(runningTask.timer_start_time);
+          const now = new Date();
+          const sessionElapsed = now.getTime() - timerStartTime.getTime();
+          const serverElapsed = (runningTask.time_spent || 0) + sessionElapsed;
+          
+          // Reset client timer with server time
+          startClientTimer(serverElapsed);
+          console.log('Timer resynced from server:', Math.round(serverElapsed / 1000), 'seconds');
+        }
+      })
+      .catch(error => console.error('Error syncing timer from server:', error));
+  }
+
+  function startClientTimer(taskTimeSpent = 0) {
+    clientTimerStartTime = Date.now();
+    baseTimeSpent = taskTimeSpent;
+    lastSyncTime = Date.now();
+  }
+
+  function stopClientTimer() {
+    const finalTime = getCurrentElapsedTime();
+    clientTimerStartTime = null;
+    baseTimeSpent = 0;
+    lastSyncTime = null;
+    return finalTime;
+  }
+
   // --- API Helper Functions ---
   let csrfToken = null;
   
@@ -71,7 +127,10 @@ document.addEventListener('DOMContentLoaded', async function() {
   async function fetchData(url = '', method = 'GET', data = null) {
     const config = {
       method: method,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Connection': 'keep-alive' // Optimize connection reuse
+      },
     };
     
     // Add CSRF token for state-changing requests
@@ -153,6 +212,23 @@ document.addEventListener('DOMContentLoaded', async function() {
     startBtn.addEventListener('click', startTimer);
     pauseBtn.addEventListener('click', pauseTimer);
     stopBtn.addEventListener('click', stopTimer);
+    
+    // Tab visibility detection to fix timer sync issues
+    document.addEventListener('visibilitychange', function() {
+      if (!document.hidden) {
+        // Tab became visible - resync timer
+        console.log('Tab became visible, resyncing timer...');
+        syncTimerFromServer();
+      }
+    });
+    
+    // Window focus detection as backup
+    window.addEventListener('focus', function() {
+      setTimeout(() => {
+        console.log('Window focused, resyncing timer...');
+        syncTimerFromServer();
+      }, 100); // Small delay to ensure tab is fully active
+    });
     
     if(addTaskBtn) addTaskBtn.addEventListener('click', () => {
       // Set current time as default
@@ -250,47 +326,71 @@ document.addEventListener('DOMContentLoaded', async function() {
       // Generate new session ID
       currentSessionId = generateSessionId();
       
-      // Start timer on server
-      const result = await fetchData('/api/timer/start', 'POST', {
-        task_id: currentSelectedTaskId,
-        session_id: currentSessionId
-      });
+      // Update UI immediately for responsiveness
+      timerState = 'running';
+      if (startBtn) startBtn.disabled = true;
+      if (pauseBtn) pauseBtn.disabled = false;
+      if (stopBtn) stopBtn.disabled = false;
       
-      if (!result) {
-        showNotification('Failed to start timer. Please try again.', 'error');
-        return;
+      // Start client timer with current time spent
+      startClientTimer(task.time_spent || 0);
+      
+      // Start local timer display immediately
+      clearInterval(timerInterval);
+      timerInterval = setInterval(updateTimerDisplay, 100);
+      
+      // Disable task switching
+      if (taskOptionsContainer) {
+        taskOptionsContainer.querySelectorAll('.task-option').forEach(opt => opt.style.pointerEvents = 'none');
       }
       
-      if (result.status === 'success') {
-        timerState = 'running';
+      // Send to server in background (non-blocking)
+      fetchData('/api/timer/start', 'POST', {
+        task_id: currentSelectedTaskId,
+        session_id: currentSessionId
+      }).then(result => {
+        if (!result || result.status !== 'success') {
+          // Revert UI changes if server call failed
+          timerState = 'stopped';
+          if (startBtn) startBtn.disabled = false;
+          if (pauseBtn) pauseBtn.disabled = true;
+          if (stopBtn) stopBtn.disabled = true;
+          clearInterval(timerInterval);
+          if (taskOptionsContainer) {
+            taskOptionsContainer.querySelectorAll('.task-option').forEach(opt => opt.style.pointerEvents = 'auto');
+          }
+          showNotification('Failed to start timer. Please try again.', 'error');
+          return;
+        }
         
-        // Update local task state
-        task.status = 'in-progress';
-        
-        // Start display update interval
-        clearInterval(timerInterval);
-        timerInterval = setInterval(updateTimerDisplay, 1000);
+        // Update local task state with server response
+        if (task) {
+          task.status = 'in-progress';
+          task.timer_session_id = currentSessionId;
+        }
         
         // Start server sync interval
         clearInterval(serverSyncInterval);
-        serverSyncInterval = setInterval(syncTimerWithServer, 30000); // Sync every 30 seconds
-        
-        // Update UI
-        if (startBtn) startBtn.disabled = true;
-        if (pauseBtn) pauseBtn.disabled = false;
-        if (stopBtn) stopBtn.disabled = false;
-        if (taskOptionsContainer) {
-          taskOptionsContainer.querySelectorAll('.task-option').forEach(opt => opt.style.pointerEvents = 'none');
-        }
+        serverSyncInterval = setInterval(syncTimerWithServer, 60000);
         
         // Log activity
         addActivityLog(`Started working on: ${task.title}`, task.id);
         
         showNotification('Timer started!');
         updateAllStats();
-      } else {
-        showNotification(result.error || 'Failed to start timer', 'error');
-      }
+      }).catch(error => {
+        console.error('Error starting timer on server:', error);
+        // Revert UI changes if server call failed
+        timerState = 'stopped';
+        if (startBtn) startBtn.disabled = false;
+        if (pauseBtn) pauseBtn.disabled = true;
+        if (stopBtn) stopBtn.disabled = true;
+        clearInterval(timerInterval);
+        if (taskOptionsContainer) {
+          taskOptionsContainer.querySelectorAll('.task-option').forEach(opt => opt.style.pointerEvents = 'auto');
+        }
+        showNotification('Failed to start timer. Please try again.', 'error');
+      });
     } catch (error) {
       console.error('Error starting timer:', error);
       showNotification('An error occurred while starting the timer.', 'error');
@@ -304,9 +404,13 @@ document.addEventListener('DOMContentLoaded', async function() {
         return;
       }
       
+      // Get client-calculated time before pausing
+      const finalTime = getCurrentElapsedTime();
+      
       const result = await fetchData('/api/timer/pause', 'POST', {
         task_id: currentSelectedTaskId,
-        session_id: currentSessionId
+        session_id: currentSessionId,
+        client_time: finalTime
       });
       
       if (!result) {
@@ -354,17 +458,32 @@ document.addEventListener('DOMContentLoaded', async function() {
         return;
       }
 
-      const result = await fetchData('/api/timer/stop', 'POST', {
-        task_id: currentSelectedTaskId,
-        session_id: currentSessionId
-      });
+      // Get client-calculated time before stopping
+      const finalTime = stopClientTimer();
       
-      if (!result) {
-        showNotification('Failed to stop timer. Please try again.', 'error');
-        return;
+      // Update UI immediately for responsiveness
+      timerState = 'stopped';
+      clearInterval(timerInterval);
+      clearInterval(serverSyncInterval);
+      
+      // Reset UI states
+      if (startBtn) startBtn.disabled = false;
+      if (pauseBtn) pauseBtn.disabled = true;
+      if (stopBtn) stopBtn.disabled = true;
+      if (taskOptionsContainer) {
+        taskOptionsContainer.querySelectorAll('.task-option').forEach(opt => opt.style.pointerEvents = 'auto');
       }
       
-      if (result.status === 'success') {
+      // Send to server in background
+      fetchData('/api/timer/stop', 'POST', {
+        task_id: currentSelectedTaskId,
+        session_id: currentSessionId,
+        client_time: finalTime
+      }).then(result => {
+        if (!result || result.status !== 'success') {
+          showNotification('Failed to stop timer on server, but stopped locally.', 'warning');
+          return;
+        }
         const task = getTaskById(currentSelectedTaskId);
         if (task) {
           task.status = 'completed';
@@ -375,9 +494,14 @@ document.addEventListener('DOMContentLoaded', async function() {
         resetTimerUI();
         renderSchedule();
         updateAllStats();
-      } else {
-        showNotification(result.error || 'Failed to stop timer', 'error');
-      }
+      }).catch(error => {
+        console.error('Error stopping timer on server:', error);
+        showNotification('Timer stopped locally, but server sync failed.', 'warning');
+      });
+      
+      // Reset timer state regardless
+      currentSelectedTaskId = null;
+      currentSessionId = null;
     } catch (error) {
       console.error('Error stopping timer:', error);
       showNotification('An error occurred while stopping the timer.', 'error');
@@ -387,9 +511,13 @@ document.addEventListener('DOMContentLoaded', async function() {
   async function syncTimerWithServer() {
     if (timerState !== 'running' || !currentSelectedTaskId || !currentSessionId) return;
     
+    // Send client-calculated time to server for backup
+    const clientTime = getCurrentElapsedTime();
+    
     const result = await fetchData('/api/timer/sync', 'POST', {
       task_id: currentSelectedTaskId,
-      session_id: currentSessionId
+      session_id: currentSessionId,
+      client_time: clientTime  // Send our calculated time
     });
     
     if (!result) return;
@@ -401,14 +529,17 @@ document.addEventListener('DOMContentLoaded', async function() {
     }
     
     if (result.status === 'success') {
-      // Update local display with server data
-      const task = getTaskById(currentSelectedTaskId);
-      if (task) {
-        task.time_spent = result.time_spent;
-        task.status = result.task_status;
-        
-        // Update timer display
-        timerDisplay.textContent = formatTime(result.total_display_time);
+      // Update sync time but keep using client-side calculation
+      lastSyncTime = Date.now();
+      
+      // Optionally update base time if server and client differ significantly
+      const serverTime = result.time_spent || 0;
+      const timeDifference = Math.abs(clientTime - serverTime);
+      
+      if (timeDifference > 10000) { // More than 10 seconds difference
+        console.log('Large time difference detected, syncing with server');
+        baseTimeSpent = serverTime;
+        clientTimerStartTime = Date.now();
       }
     }
   }
@@ -416,6 +547,9 @@ document.addEventListener('DOMContentLoaded', async function() {
   function resetTimerUI() {
     timerState = 'stopped';
     currentSessionId = null;
+    
+    // Clean up client-side timer
+    stopClientTimer();
     
     // Clear intervals
     clearInterval(timerInterval);
@@ -434,10 +568,11 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Re-enable task selection
     taskOptionsContainer.querySelectorAll('.task-option').forEach(opt => opt.style.pointerEvents = 'auto');
     document.querySelectorAll('.task-option.selected').forEach(el => el.classList.remove('selected'));
-    document.querySelectorAll('.schedule-row.current-task').forEach(el => el.classList.remove('current-task'));
+    document.querySelectorAll('.schedule-item.selected-task').forEach(el => el.classList.remove('selected-task'));
   }
 
-  async function updateTimerDisplay() {
+  function updateTimerDisplay() {
+    // Client-side timer display update (no server polling!)
     if (timerState !== 'running' || !currentSelectedTaskId) {
       // If timer is not running, just display current task time
       const task = getTaskById(currentSelectedTaskId);
@@ -447,31 +582,18 @@ document.addEventListener('DOMContentLoaded', async function() {
       return;
     }
     
-    try {
-      // Get current timer status from server
-      const result = await fetchData(`/api/timer/status/${currentSelectedTaskId}`);
-      
-      if (!result) return;
-      
-      if (result.session_id !== currentSessionId) {
-        showNotification('Timer session is no longer valid.', 'warning');
-        resetTimerUI();
-        return;
-      }
-      
-      // Update display with server-calculated time
-      if (timerDisplay) {
-        timerDisplay.textContent = formatTime(result.total_display_time);
-      }
-      
-      // Update local task data
-      const task = getTaskById(currentSelectedTaskId);
-      if (task) {
-        task.time_spent = result.time_spent;
-        task.status = result.status;
-      }
-    } catch (error) {
-      console.error('Error updating timer display:', error);
+    // Calculate current time client-side
+    const currentTime = getCurrentElapsedTime();
+    
+    // Update display immediately (no waiting for server!)
+    if (timerDisplay) {
+      timerDisplay.textContent = formatTime(currentTime);
+    }
+    
+    // Update local task data for other UI elements
+    const task = getTaskById(currentSelectedTaskId);
+    if (task) {
+      task.time_spent = currentTime;
     }
   }
 
@@ -489,25 +611,50 @@ document.addEventListener('DOMContentLoaded', async function() {
       );
       
       if (runningTask) {
-        // Resume the timer
+        console.log('Found running timer for task:', runningTask.title, 'Timer start time:', runningTask.timer_start_time);
+        
+        // Set timer state variables first
         currentSelectedTaskId = runningTask.id;
         currentSessionId = runningTask.timer_session_id;
         timerState = 'running';
         
-        // Update UI
-        currentTaskLabel.textContent = runningTask.title;
-        selectTaskForTimer(runningTask.id, false); // Don't start new session
+        // Calculate current elapsed time based on server timer_start_time
+        let currentElapsed = runningTask.time_spent || 0;
+        if (runningTask.timer_start_time) {
+          const timerStartTime = new Date(runningTask.timer_start_time);
+          const now = new Date();
+          const sessionElapsed = now.getTime() - timerStartTime.getTime();
+          currentElapsed = (runningTask.time_spent || 0) + sessionElapsed;
+          console.log('Calculated elapsed time:', Math.round(currentElapsed / 1000), 'seconds');
+        }
+        
+        // Start client-side timer from calculated current time
+        startClientTimer(currentElapsed);
+        
+        // Update UI components
+        if (currentTaskLabel) currentTaskLabel.textContent = runningTask.title;
+        
+        // Update timer display immediately
+        updateTimerDisplay();
+        
+        // Update task selection UI
+        selectTaskForTimer(runningTask.id, true); // Prevent new session
+        
+        // Set button states
+        if (startBtn) startBtn.disabled = true;
+        if (pauseBtn) pauseBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = false;
         
         // Start intervals
         clearInterval(timerInterval);
-        timerInterval = setInterval(updateTimerDisplay, 1000);
+        timerInterval = setInterval(updateTimerDisplay, 100); // More frequent updates
         clearInterval(serverSyncInterval);
-        serverSyncInterval = setInterval(syncTimerWithServer, 30000);
+        serverSyncInterval = setInterval(syncTimerWithServer, 60000); // Every minute for better sync
         
-        // Update button states
-        startBtn.disabled = true;
-        pauseBtn.disabled = false;
-        stopBtn.disabled = false;
+        // Disable task switching during active timer
+        if (taskOptionsContainer) {
+          taskOptionsContainer.querySelectorAll('.task-option').forEach(opt => opt.style.pointerEvents = 'none');
+        }
         
         showNotification('Resumed existing timer session!', 'success');
       }
@@ -543,9 +690,10 @@ document.addEventListener('DOMContentLoaded', async function() {
     const taskOptionEl = document.getElementById(`taskOption-${taskId}`);
     if (taskOptionEl) taskOptionEl.classList.add('selected');
     
-    scheduleTableBody.querySelectorAll('.schedule-row').forEach(row => row.classList.remove('current-task'));
+    // Fix: Use correct selector and class names
+    scheduleTableBody.querySelectorAll('.schedule-item').forEach(row => row.classList.remove('selected-task'));
     const scheduleRowEl = document.getElementById(`scheduleRow-${taskId}`);
-    if (scheduleRowEl) scheduleRowEl.classList.add('current-task');
+    if (scheduleRowEl) scheduleRowEl.classList.add('selected-task');
     
     // Update button states based on task status and timer state
     if (task.status === 'in-progress' && timerState === 'running') {
@@ -603,7 +751,7 @@ document.addEventListener('DOMContentLoaded', async function() {
       if (task.status === 'in-progress') item.classList.add('current-task');
       if (task.status === 'completed') item.classList.add('completed-task');
       if (task.status === 'paused') item.classList.add('paused-task');
-      if (currentSelectedTaskId === task.id && task.status !== 'completed') item.classList.add('current-task'); // Persist selection highlight
+      if (currentSelectedTaskId === task.id && task.status !== 'completed') item.classList.add('selected-task'); // Use separate class for selection
       
       let timeDisplay = task.start_time || 'Any Time';
       if (task.start_time && task.duration_minutes) {
@@ -628,7 +776,7 @@ document.addEventListener('DOMContentLoaded', async function() {
           <div id="statusIndicator-${task.id}" class="status-indicator ${task.status}"></div>
         </div>
         <div class="schedule-item-actions">
-          <button class="btn-tiny select-btn" data-task-id="${task.id}" ${task.status === 'completed' ? 'disabled' : ''}>${currentSelectedTaskId === task.id && !timerIsPaused && timerInterval ? 'Selected' : 'Select'}</button>
+          <button class="btn-tiny select-btn" data-task-id="${task.id}" ${task.status === 'completed' ? 'disabled' : ''}>${currentSelectedTaskId === task.id ? 'Selected' : 'Select'}</button>
           <button class="btn-tiny edit-btn" data-task-id="${task.id}" ${task.status === 'completed' ? 'disabled' : ''}>Edit</button>
           <button class="btn-tiny delete-btn" data-task-id="${task.id}">Del</button>
         </div>`;

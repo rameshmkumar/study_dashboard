@@ -1,8 +1,9 @@
-import sqlite3
 import json
 import logging
 import sys
 import re
+import psycopg2
+import psycopg2.extras
 from flask import Flask, render_template, request, jsonify, g, redirect, url_for, flash
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from flask_wtf.csrf import CSRFProtect
@@ -10,49 +11,56 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import os
 from dotenv import load_dotenv
+from urllib.parse import urlparse
 
 # Load environment variables
 load_dotenv()
 
 # --- App Configuration ---
-# Determine Database Path:
-# Priority: DATABASE_URL env var (for Render), then local instance folder.
-DATABASE_URL_FROM_ENV = os.environ.get('DATABASE_URL')
-DEFAULT_LOCAL_DB_PATH = os.path.join(os.getcwd(), 'instance', 'focus_flow.db')
+# Database Configuration: PostgreSQL (Supabase)
+DATABASE_URL = os.environ.get('DATABASE_URL')
 
-if DATABASE_URL_FROM_ENV and DATABASE_URL_FROM_ENV.startswith("sqlite:///"):
-    # Path for Render's persistent disk, e.g., /var/data/focus_flow.db
-    # The split("///", 1)[1] correctly gets the path after "sqlite///"
-    DATABASE = DATABASE_URL_FROM_ENV.split("///", 1)[1]
+if DATABASE_URL:
+    # Parse the database URL for PostgreSQL connection
+    url = urlparse(DATABASE_URL)
+    DATABASE_CONFIG = {
+        'host': url.hostname,
+        'port': url.port or 5432,
+        'database': url.path[1:],  # Remove leading '/'
+        'user': url.username,
+        'password': url.password,
+        'sslmode': 'require'  # Required for most cloud databases
+    }
+    print(f"Using PostgreSQL database: {DATABASE_CONFIG['host']}")
 else:
-    # Fallback for local development
-    DATABASE = DEFAULT_LOCAL_DB_PATH
-
-# Ensure the directory for the database exists, especially important for Render
-# If DATABASE is an absolute path (like on Render), os.path.dirname will give the directory
-# If it's a relative path (like 'instance/focus_flow.db'), it will also work.
-db_dir = os.path.dirname(DATABASE)
-if db_dir and not os.path.exists(db_dir): # Check if db_dir is not empty (e.g. if DATABASE was just "file.db")
-    try:
-        os.makedirs(db_dir, exist_ok=True)
-        print(f"Created database directory: {db_dir}")
-    except OSError as e:
-        print(f"Error creating database directory {db_dir}: {e}")
-elif not db_dir: # This case is if DATABASE is a filename in the current directory (e.g. "focus_flow.db")
-    print(f"Database will be created in the current directory: {os.getcwd()}")
+    # Fallback for local development (you'll need local PostgreSQL)
+    DATABASE_CONFIG = {
+        'host': 'localhost',
+        'port': 5432,
+        'database': 'focusflow_dev',
+        'user': 'postgres',
+        'password': 'password'
+    }
+    print("Warning: Using local PostgreSQL database for development")
 
 
 # Flask App Initialization
 app = Flask(__name__)
 
 # Production Configuration
-app.config['DATABASE'] = DATABASE
+app.config['DATABASE_CONFIG'] = DATABASE_CONFIG
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'a_very_strong_random_secret_key_for_dev_only_123!')
 app.config['WTF_CSRF_ENABLED'] = os.environ.get('WTF_CSRF_ENABLED', 'True').lower() == 'true'
 app.config['WTF_CSRF_TIME_LIMIT'] = int(os.environ.get('WTF_CSRF_TIME_LIMIT', '3600'))
+
+# Session Security Configuration
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', 'False').lower() == 'true'
+app.config['SESSION_COOKIE_HTTPONLY'] = os.environ.get('SESSION_COOKIE_HTTPONLY', 'True').lower() == 'true'
+app.config['SESSION_COOKIE_SAMESITE'] = os.environ.get('SESSION_COOKIE_SAMESITE', 'Lax')
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=2)  # 2 hour session timeout
 
 # Security Check - Fail if using default SECRET_KEY in production
 if app.config['SECRET_KEY'] == 'a_very_strong_random_secret_key_for_dev_only_123!':
@@ -72,7 +80,7 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 csrf = CSRFProtect(app)
 limiter = Limiter(
     key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"],
+    default_limits=["1000 per day", "200 per hour"],  # Increased for better scalability (was 200/day, 50/hour)
     storage_uri=os.environ.get('RATELIMIT_STORAGE_URL', 'memory://')
 )
 limiter.init_app(app)
@@ -106,22 +114,14 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
-# --- Datetime Handling for SQLite ---
-def adapt_datetime(dt_obj):
-    return dt_obj.isoformat()
-
-def convert_timestamp(ts_bytes):
-    return datetime.fromisoformat(ts_bytes.decode('utf-8'))
-
-sqlite3.register_adapter(datetime, adapt_datetime)
-sqlite3.register_converter("timestamp", convert_timestamp)
-sqlite3.register_converter("datetime", convert_timestamp)
+# --- PostgreSQL Database Connection ---
 
 # --- Security Helper Functions ---
 def handle_database_error(e, operation, user_message="An error occurred. Please try again."):
     """Safely handle database errors without exposing sensitive information"""
     error_id = f"err_{int(datetime.now().timestamp())}"
-    app.logger.error(f"Database error [{error_id}] during {operation}: {str(e)}")
+    # Security: Never log sensitive data or full error details
+    app.logger.error(f"Database error [{error_id}] during {operation}: {type(e).__name__}")
     return user_message, error_id
 
 def safe_error_response(message="An error occurred. Please try again.", status_code=500):
@@ -165,19 +165,81 @@ def validate_password(password):
     
     return True, ""
 
+def validate_timer_request(data, required_fields):
+    """Validate timer API requests for security"""
+    if not data:
+        return False, "Invalid request data"
+    
+    for field in required_fields:
+        if field not in data or not data[field]:
+            return False, f"Missing required field: {field}"
+    
+    # Validate session_id format (should be session_timestamp_randomstring)
+    session_id = data.get('session_id')
+    if session_id and not re.match(r'^session_\d+_[a-z0-9]+$', session_id):
+        return False, "Invalid session ID format"
+    
+    # Validate task_id is integer
+    task_id = data.get('task_id')
+    if task_id and not isinstance(task_id, int) and not str(task_id).isdigit():
+        return False, "Invalid task ID format"
+    
+    return True, ""
+
+def serialize_task_data(task_dict):
+    """Convert task data for JSON serialization"""
+    if not task_dict:
+        return task_dict
+    
+    # Convert time objects to strings
+    if task_dict.get('start_time'):
+        task_dict['start_time'] = str(task_dict['start_time'])
+    if task_dict.get('timer_start_time'):
+        task_dict['timer_start_time'] = task_dict['timer_start_time'].isoformat() if hasattr(task_dict['timer_start_time'], 'isoformat') else str(task_dict['timer_start_time'])
+    if task_dict.get('last_sync_time'):
+        task_dict['last_sync_time'] = task_dict['last_sync_time'].isoformat() if hasattr(task_dict['last_sync_time'], 'isoformat') else str(task_dict['last_sync_time'])
+    if task_dict.get('created_at'):
+        task_dict['created_at'] = task_dict['created_at'].isoformat() if hasattr(task_dict['created_at'], 'isoformat') else str(task_dict['created_at'])
+    if task_dict.get('updated_at'):
+        task_dict['updated_at'] = task_dict['updated_at'].isoformat() if hasattr(task_dict['updated_at'], 'isoformat') else str(task_dict['updated_at'])
+    
+    return task_dict
+
 # --- Database Helper Functions ---
+def execute_query(query, params=None, fetch_one=False, fetch_all=False):
+    """Helper function to execute PostgreSQL queries"""
+    db = get_db()
+    cursor = db.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    
+    try:
+        cursor.execute(query, params)
+        
+        if fetch_one:
+            result = cursor.fetchone()
+            cursor.close()
+            return result
+        elif fetch_all:
+            result = cursor.fetchall()
+            cursor.close()
+            return result
+        else:
+            # For INSERT/UPDATE/DELETE operations
+            db.commit()
+            cursor.close()
+            return cursor.rowcount
+            
+    except Exception as e:
+        db.rollback()
+        cursor.close()
+        raise e
+
 def get_db():
     if 'db' not in g:
         try:
-            g.db = sqlite3.connect(
-                app.config['DATABASE'],
-                detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES
-            )
-            g.db.row_factory = sqlite3.Row
-            g.db.execute("PRAGMA foreign_keys = ON")
-        except sqlite3.OperationalError as e:
-            print(f"Error connecting to database at {app.config['DATABASE']}: {e}")
-            # Potentially raise the error or handle it if critical for app startup
+            g.db = psycopg2.connect(**app.config['DATABASE_CONFIG'])
+            g.db.autocommit = False  # Use transactions
+        except psycopg2.Error as e:
+            print(f"Error connecting to PostgreSQL database: {e}")
             raise
     return g.db
 
@@ -188,18 +250,26 @@ def close_db(exception):
         db.close()
 
 def init_db():
-    # This function is called by the 'flask init-db' command
-    # It will use the DATABASE path configured in app.config
+    # Initialize PostgreSQL database with schema
     try:
         with app.app_context():
-            db = get_db() # This will use the app.config['DATABASE'] path
-            with app.open_resource('schema.sql', mode='r') as f:
-                db.cursor().executescript(f.read())
+            db = get_db()
+            cursor = db.cursor()
+            
+            # Read and execute PostgreSQL schema
+            with app.open_resource('schema_postgresql.sql', mode='r') as f:
+                schema_sql = f.read()
+                
+            # Execute the schema (PostgreSQL handles multiple statements)
+            cursor.execute(schema_sql)
             db.commit()
-        print(f"Database initialized successfully at {app.config['DATABASE']}.")
+            cursor.close()
+            
+        print(f"PostgreSQL database initialized successfully at {app.config['DATABASE_CONFIG']['host']}")
     except Exception as e:
-        print(f"Error during init_db: {e}")
-        print(f"Attempted to use database path: {app.config.get('DATABASE', 'Not Set')}")
+        print(f"Error during PostgreSQL database initialization: {e}")
+        print(f"Database config: {app.config.get('DATABASE_CONFIG', 'Not Set')}")
+        raise
 
 
 @app.cli.command('init-db')
@@ -209,34 +279,56 @@ def init_db_command():
 
 # Auto-initialize database on startup (for production deployments)
 def ensure_database_initialized():
-    """Ensure database is initialized on app startup"""
-    if not os.path.exists(DATABASE):
-        print(f"Database at {DATABASE} not found. Auto-initializing...")
+    """Ensure PostgreSQL database schema is initialized on app startup"""
+    try:
+        with app.app_context():
+            db = get_db()
+            cursor = db.cursor()
+            
+            # Check if users table exists
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.tables 
+                    WHERE table_name = 'users'
+                );
+            """)
+            tables_exist = cursor.fetchone()[0]
+            cursor.close()
+            
+            if not tables_exist:
+                print("PostgreSQL database schema not found. Auto-initializing...")
+                init_db()
+                print("Database auto-initialization completed successfully.")
+            else:
+                print("PostgreSQL database schema already exists.")
+                
+    except Exception as e:
+        print(f"Error during database initialization check: {e}")
+        # Try to initialize anyway
         try:
             with app.app_context():
                 init_db()
             print("Database auto-initialization completed successfully.")
-        except Exception as e:
-            print(f"Error during database auto-initialization: {e}")
-            # Don't crash the app, but log the error
-            app.logger.error(f"Database initialization failed: {e}")
+        except Exception as init_error:
+            print(f"Error during database auto-initialization: {init_error}")
+            app.logger.error(f"Database initialization failed: {init_error}")
 
 # Initialize database on import (when gunicorn starts the app)
 ensure_database_initialized()
 
 # --- User Model for Flask-Login ---
 class User(UserMixin):
-    def __init__(self, id, username, email, password_hash, created_at=None): # Added created_at
+    def __init__(self, id, username, email, created_at=None): # Removed password_hash for security
         self.id = id
         self.username = username
         self.email = email
-        self.password_hash = password_hash
         self.created_at = created_at # Store it
+        # NOTE: password_hash deliberately excluded for security
 
 @login_manager.user_loader
 def load_user(user_id):
-    db = get_db()
-    user_data = db.execute('SELECT id, username, email, password_hash, created_at FROM users WHERE id = ?', (user_id,)).fetchone()
+    # Security: Only load necessary user data, exclude password_hash
+    user_data = execute_query('SELECT id, username, email, created_at FROM users WHERE id = %s', (user_id,), fetch_one=True)
     if user_data:
         # Convert created_at if it's a string from the DB, otherwise use as is if already datetime
         created_at_val = user_data['created_at']
@@ -245,7 +337,7 @@ def load_user(user_id):
                 created_at_val = datetime.fromisoformat(created_at_val)
              except ValueError: # Fallback if not ISO format, though schema.sql uses DATETIME DEFAULT CURRENT_TIMESTAMP
                 created_at_val = None # Or handle error appropriately
-        return User(user_data['id'], user_data['username'], user_data['email'], user_data['password_hash'], created_at_val)
+        return User(user_data['id'], user_data['username'], user_data['email'], created_at_val)
     return None
 
 # --- Routes (Home, Auth) ---
@@ -265,9 +357,8 @@ def signup():
         email = request.form.get('email')
         password = request.form.get('password')
         
-        db = get_db()
-        user_by_username = db.execute('SELECT id FROM users WHERE username = ?', (username,)).fetchone()
-        user_by_email = db.execute('SELECT id FROM users WHERE email = ?', (email,)).fetchone()
+        user_by_username = execute_query('SELECT id FROM users WHERE username = %s', (username,), fetch_one=True)
+        user_by_email = execute_query('SELECT id FROM users WHERE email = %s', (email,), fetch_one=True)
 
         if user_by_username:
             flash('Username already exists.', 'error')
@@ -281,13 +372,11 @@ def signup():
             else:
                 password_hash = generate_password_hash(password, method='pbkdf2:sha256')
                 try:
-                    db.execute('INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)',
+                    execute_query('INSERT INTO users (username, email, password_hash) VALUES (%s, %s, %s)',
                                (username, email, password_hash))
-                    db.commit()
                     flash('Account created successfully! Please log in.', 'success')
                     return redirect(url_for('login'))
-                except sqlite3.Error as e:
-                    db.rollback()
+                except psycopg2.Error as e:
                     user_message, error_id = handle_database_error(e, "user signup")
                     flash(user_message, 'error')
 
@@ -304,20 +393,31 @@ def login():
         password = request.form.get('password')
         remember = True if request.form.get('remember') else False
 
-        db = get_db()
-        user_data = db.execute('SELECT id, username, email, password_hash, created_at FROM users WHERE username = ?', (username,)).fetchone()
+        # Security: Only get password_hash for verification, don't store it
+        user_data = execute_query('SELECT id, username, email, password_hash, created_at FROM users WHERE username = %s', (username,), fetch_one=True)
 
         if not user_data or not check_password_hash(user_data['password_hash'], password):
+            # Security: Add delay to prevent timing attacks
+            import time
+            time.sleep(0.5)
             flash('Invalid username or password.', 'error')
             return redirect(url_for('login'))
+        
+        # Security: Regenerate session to prevent session fixation
+        from flask import session
+        session.regenerate = True
         
         created_at_val = user_data['created_at']
         if isinstance(created_at_val, str):
             created_at_val = datetime.fromisoformat(created_at_val)
 
-        user_obj = User(user_data['id'], user_data['username'], user_data['email'], user_data['password_hash'], created_at_val)
+        # Security: Create user object without password_hash
+        user_obj = User(user_data['id'], user_data['username'], user_data['email'], created_at_val)
         login_user(user_obj, remember=remember)
-        # flash('Logged in successfully!', 'success') # Flashing on dashboard might be better
+        
+        # Security: Log successful login
+        app.logger.info(f"Successful login for user: {username} (ID: {user_data['id']})")
+        
         return redirect(url_for('dashboard'))
     return render_template('login.html')
 
@@ -358,10 +458,8 @@ def profile():
                 flash(password_error, 'error')
             else:
                 new_password_hash = generate_password_hash(new_password, method='pbkdf2:sha256')
-                db = get_db()
                 try:
-                    db.execute('UPDATE users SET password_hash = ? WHERE id = ?', (new_password_hash, current_user.id))
-                    db.commit()
+                    execute_query('UPDATE users SET password_hash = %s WHERE id = %s', (new_password_hash, current_user.id))
                     
                     # Log the password change for security audit
                     app.logger.info(f"Password changed for user ID: {current_user.id}, username: {current_user.username}")
@@ -370,8 +468,7 @@ def profile():
                     logout_user()
                     flash('Password updated successfully. Please log in with your new password.', 'success')
                     return redirect(url_for('login'))
-                except sqlite3.Error as e:
-                    db.rollback()
+                except psycopg2.Error as e:
                     user_message, error_id = handle_database_error(e, "password update")
                     flash(user_message, 'error')
         return redirect(url_for('profile'))
@@ -391,34 +488,45 @@ def get_csrf_token():
 @limiter.limit("60 per minute")  # Allow frequent data refresh but prevent abuse
 def get_daily_summary():
     date_str = request.args.get('date', datetime.now().strftime('%Y-%m-%d'))
-    db = get_db()
     
-    tasks_cursor = db.execute(
+    tasks_raw = execute_query(
         """SELECT id, title, description, start_time, duration_minutes, status, time_spent,
                   timer_start_time, timer_session_id, last_sync_time
            FROM user_tasks 
-           WHERE user_id = ? AND entry_date = ? 
+           WHERE user_id = %s AND entry_date = %s 
            ORDER BY CASE WHEN start_time IS NULL THEN 1 ELSE 0 END, start_time, created_at""", 
-        (current_user.id, date_str)
+        (current_user.id, date_str), fetch_all=True
     )
-    tasks = [dict(row) for row in tasks_cursor]
+    
+    # Convert time objects to strings for JSON serialization
+    tasks = []
+    if tasks_raw:
+        for row in tasks_raw:
+            task = dict(row)
+            # Convert time objects to strings
+            if task.get('start_time'):
+                task['start_time'] = str(task['start_time'])
+            if task.get('timer_start_time'):
+                task['timer_start_time'] = task['timer_start_time'].isoformat() if hasattr(task['timer_start_time'], 'isoformat') else str(task['timer_start_time'])
+            if task.get('last_sync_time'):
+                task['last_sync_time'] = task['last_sync_time'].isoformat() if hasattr(task['last_sync_time'], 'isoformat') else str(task['last_sync_time'])
+            tasks.append(task)
 
-    entry_cursor = db.execute('SELECT notes FROM daily_entries WHERE user_id = ? AND entry_date = ?', (current_user.id, date_str))
-    daily_entry = entry_cursor.fetchone()
+    daily_entry = execute_query('SELECT notes FROM daily_entries WHERE user_id = %s AND entry_date = %s', (current_user.id, date_str), fetch_one=True)
     notes = daily_entry['notes'] if daily_entry else ''
 
-    log_cursor = db.execute(
-        "SELECT message, timestamp as 'timestamp [timestamp]', task_db_id FROM activity_log WHERE user_id = ? AND date(timestamp) = date(?) ORDER BY timestamp DESC", 
-        (current_user.id, date_str) # Use date() for comparison on timestamp for safety
+    activity_log_data_raw = execute_query(
+        "SELECT message, timestamp, task_db_id FROM activity_log WHERE user_id = %s AND DATE(timestamp) = DATE(%s) ORDER BY timestamp DESC", 
+        (current_user.id, date_str), fetch_all=True
     )
-    activity_log_data = [{'message': row['message'], 'timestamp': row['timestamp'].isoformat(), 'task_db_id': row['task_db_id']} for row in log_cursor]
+    activity_log_data = [{'message': row['message'], 'timestamp': row['timestamp'].isoformat(), 'task_db_id': row['task_db_id']} for row in activity_log_data_raw] if activity_log_data_raw else []
     
-    streak_dates_cursor = db.execute(
+    completed_dates_raw = execute_query(
         """SELECT DISTINCT entry_date FROM user_tasks 
-           WHERE user_id = ? AND status = 'completed' 
-           ORDER BY entry_date DESC""", (current_user.id,)
+           WHERE user_id = %s AND status = 'completed' 
+           ORDER BY entry_date DESC""", (current_user.id,), fetch_all=True
     )
-    completed_dates_str = [row['entry_date'] for row in streak_dates_cursor]
+    completed_dates_str = [row['entry_date'] for row in completed_dates_raw] if completed_dates_raw else []
     
     current_streak = 0
     if completed_dates_str:
@@ -426,7 +534,7 @@ def get_daily_summary():
         
         last_streak_date = None
         # Iterate through unique completed dates, from most recent
-        unique_sorted_completed_dates = sorted(list(set(datetime.strptime(d, '%Y-%m-%d').date() for d in completed_dates_str)), reverse=True)
+        unique_sorted_completed_dates = sorted(list(set(d if isinstance(d, date) else datetime.strptime(d, '%Y-%m-%d').date() for d in completed_dates_str)), reverse=True)
 
         for completed_date_obj in unique_sorted_completed_dates:
             if completed_date_obj > today_obj: # Ignore future completed dates (should not happen)
@@ -467,20 +575,21 @@ def get_daily_summary():
 @limiter.limit("30 per minute")  # Prevent rapid task creation spam
 def create_task():
     data = request.json
-    db = get_db()
     try:
-        cursor = db.execute(
+        execute_query(
             """INSERT INTO user_tasks (user_id, entry_date, title, description, start_time, duration_minutes, status, time_spent)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
             (current_user.id, data['entry_date'], data['title'], data.get('description', ''), 
-             data.get('start_time') or None, data.get('duration_minutes') or None, 'pending', 0) # Ensure empty strings become NULL
+             data.get('start_time') or None, data.get('duration_minutes') or None, 'pending', 0)
         )
-        db.commit()
-        new_task_id = cursor.lastrowid
-        new_task_data = db.execute("SELECT * FROM user_tasks WHERE id = ?", (new_task_id,)).fetchone()
-        return jsonify(dict(new_task_data)), 201
-    except sqlite3.Error as e:
-        db.rollback()
+        
+        # Get the new task data
+        new_task_data = execute_query("SELECT * FROM user_tasks WHERE user_id = %s AND entry_date = %s ORDER BY id DESC LIMIT 1", 
+                                     (current_user.id, data['entry_date']), fetch_one=True)
+        # Serialize for JSON
+        serialized_task = serialize_task_data(dict(new_task_data)) if new_task_data else {}
+        return jsonify(serialized_task), 201
+    except psycopg2.Error as e:
         handle_database_error(e, "task creation")
         return safe_error_response("Failed to create task")
 
@@ -489,23 +598,22 @@ def create_task():
 @login_required
 def update_task(task_id):
     data = request.json
-    db = get_db()
-    task_check = db.execute("SELECT id FROM user_tasks WHERE id = ? AND user_id = ?", (task_id, current_user.id)).fetchone()
+    task_check = execute_query("SELECT id FROM user_tasks WHERE id = %s AND user_id = %s", (task_id, current_user.id), fetch_one=True)
     if not task_check:
         return jsonify({"error": "Task not found or unauthorized"}), 404
     try:
-        db.execute(
+        execute_query(
             """UPDATE user_tasks SET 
-               title = ?, description = ?, start_time = ?, duration_minutes = ?, status = ?, time_spent = ?
-               WHERE id = ? AND user_id = ?""",
+               title = %s, description = %s, start_time = %s, duration_minutes = %s, status = %s, time_spent = %s
+               WHERE id = %s AND user_id = %s""",
             (data['title'], data.get('description', ''), data.get('start_time') or None, data.get('duration_minutes') or None,
              data['status'], data['time_spent'], task_id, current_user.id)
         )
-        db.commit()
-        updated_task_data = db.execute("SELECT * FROM user_tasks WHERE id = ?", (task_id,)).fetchone()
-        return jsonify(dict(updated_task_data))
-    except sqlite3.Error as e:
-        db.rollback()
+        updated_task_data = execute_query("SELECT * FROM user_tasks WHERE id = %s", (task_id,), fetch_one=True)
+        # Serialize for JSON
+        serialized_task = serialize_task_data(dict(updated_task_data)) if updated_task_data else {}
+        return jsonify(serialized_task)
+    except psycopg2.Error as e:
         handle_database_error(e, "task update")
         return safe_error_response("Failed to update task")
 
@@ -513,19 +621,16 @@ def update_task(task_id):
 @login_required
 def update_task_status_and_time(task_id):
     data = request.json
-    db = get_db()
-    task_check = db.execute("SELECT id FROM user_tasks WHERE id = ? AND user_id = ?", (task_id, current_user.id)).fetchone()
+    task_check = execute_query("SELECT id FROM user_tasks WHERE id = %s AND user_id = %s", (task_id, current_user.id), fetch_one=True)
     if not task_check:
         return jsonify({"error": "Task not found or unauthorized"}), 404
     try:    
-        db.execute(
-            "UPDATE user_tasks SET status = ?, time_spent = ? WHERE id = ? AND user_id = ?",
+        execute_query(
+            "UPDATE user_tasks SET status = %s, time_spent = %s WHERE id = %s AND user_id = %s",
             (data['status'], data['time_spent'], task_id, current_user.id)
         )
-        db.commit()
         return jsonify({'status': 'success', 'message': 'Task status and time updated.'})
-    except sqlite3.Error as e:
-        db.rollback()
+    except psycopg2.Error as e:
         handle_database_error(e, "task status update")
         return safe_error_response("Failed to update task status")
 
@@ -533,16 +638,13 @@ def update_task_status_and_time(task_id):
 @app.route('/api/user-tasks/<int:task_id>', methods=['DELETE'])
 @login_required
 def delete_task(task_id):
-    db = get_db()
-    task_check = db.execute("SELECT id FROM user_tasks WHERE id = ? AND user_id = ?", (task_id, current_user.id)).fetchone()
+    task_check = execute_query("SELECT id FROM user_tasks WHERE id = %s AND user_id = %s", (task_id, current_user.id), fetch_one=True)
     if not task_check:
         return jsonify({"error": "Task not found or unauthorized"}), 404
     try:
-        db.execute("DELETE FROM user_tasks WHERE id = ? AND user_id = ?", (task_id, current_user.id))
-        db.commit()
+        execute_query("DELETE FROM user_tasks WHERE id = %s AND user_id = %s", (task_id, current_user.id))
         return jsonify({'status': 'success', 'message': 'Task deleted.'}), 200 # 200 or 204
-    except sqlite3.Error as e:
-        db.rollback()
+    except psycopg2.Error as e:
         handle_database_error(e, "task deletion")
         return safe_error_response("Failed to delete task")
 
@@ -551,18 +653,15 @@ def delete_task(task_id):
 @login_required
 def save_notes_api():
     data = request.json
-    db = get_db()
     try:
-        db.execute(
+        execute_query(
             """INSERT INTO daily_entries (user_id, entry_date, notes)
-               VALUES (?, ?, ?)
+               VALUES (%s, %s, %s)
                ON CONFLICT(user_id, entry_date) DO UPDATE SET notes = excluded.notes""",
             (current_user.id, data['date'], data['notes'])
         )
-        db.commit()
         return jsonify({'status': 'success'})
-    except sqlite3.Error as e:
-        db.rollback()
+    except psycopg2.Error as e:
         handle_database_error(e, "notes save")
         return safe_error_response("Failed to save notes")
 
@@ -580,24 +679,23 @@ def create_note():
     if not content.strip():
         return jsonify({"error": "Note content is required"}), 400
     
-    db = get_db()
     try:
-        cursor = db.execute(
+        execute_query(
             """INSERT INTO user_notes (user_id, entry_date, title, content, note_type)
-               VALUES (?, ?, ?, ?, ?)""",
+               VALUES (%s, %s, %s, %s, %s)""",
             (current_user.id, entry_date, title, content, note_type)
         )
-        db.commit()
         
         # Get the created note
-        note_id = cursor.lastrowid
-        note = db.execute(
-            "SELECT * FROM user_notes WHERE id = ?", (note_id,)
-        ).fetchone()
+        note = execute_query(
+            "SELECT * FROM user_notes WHERE user_id = %s AND entry_date = %s ORDER BY created_at DESC LIMIT 1", 
+            (current_user.id, entry_date), fetch_one=True
+        )
         
-        return jsonify(dict(note)), 201
-    except sqlite3.Error as e:
-        db.rollback()
+        # Serialize for JSON
+        serialized_note = serialize_task_data(dict(note)) if note else {}
+        return jsonify(serialized_note), 201
+    except psycopg2.Error as e:
         handle_database_error(e, "note creation")
         return safe_error_response("Failed to create note")
 
@@ -605,16 +703,16 @@ def create_note():
 @login_required
 def get_notes():
     date_str = request.args.get('date', datetime.now().strftime('%Y-%m-%d'))
-    db = get_db()
     
-    notes_cursor = db.execute(
+    notes_raw = execute_query(
         """SELECT id, title, content, note_type, created_at, updated_at
            FROM user_notes 
-           WHERE user_id = ? AND entry_date = ? 
+           WHERE user_id = %s AND entry_date = %s 
            ORDER BY created_at DESC""",
-        (current_user.id, date_str)
+        (current_user.id, date_str), fetch_all=True
     )
-    notes = [dict(row) for row in notes_cursor]
+    # Serialize notes for JSON
+    notes = [serialize_task_data(dict(row)) for row in notes_raw] if notes_raw else []
     
     return jsonify({'notes': notes, 'date': date_str})
 
@@ -622,132 +720,125 @@ def get_notes():
 @login_required
 def update_note(note_id):
     data = request.json
-    db = get_db()
     
     # Verify note belongs to user
-    note_check = db.execute(
-        "SELECT id FROM user_notes WHERE id = ? AND user_id = ?", 
-        (note_id, current_user.id)
-    ).fetchone()
+    note_check = execute_query(
+        "SELECT id FROM user_notes WHERE id = %s AND user_id = %s", 
+        (note_id, current_user.id), fetch_one=True
+    )
     
     if not note_check:
         return jsonify({"error": "Note not found or unauthorized"}), 404
     
     try:
-        db.execute(
+        execute_query(
             """UPDATE user_notes SET 
-               title = ?, content = ?, note_type = ?, updated_at = ?
-               WHERE id = ? AND user_id = ?""",
+               title = %s, content = %s, note_type = %s, updated_at = %s
+               WHERE id = %s AND user_id = %s""",
             (data.get('title', ''), data['content'], data.get('note_type', 'general'),
              datetime.now(), note_id, current_user.id)
         )
-        db.commit()
         
         # Get updated note
-        updated_note = db.execute(
-            "SELECT * FROM user_notes WHERE id = ?", (note_id,)
-        ).fetchone()
+        updated_note = execute_query(
+            "SELECT * FROM user_notes WHERE id = %s", (note_id,), fetch_one=True
+        )
         
-        return jsonify(dict(updated_note))
-    except sqlite3.Error as e:
-        db.rollback()
+        # Serialize for JSON
+        serialized_note = serialize_task_data(dict(updated_note)) if updated_note else {}
+        return jsonify(serialized_note)
+    except psycopg2.Error as e:
         handle_database_error(e, "note update")
         return safe_error_response("Failed to update note")
 
 @app.route('/api/user-notes/<int:note_id>', methods=['DELETE'])
 @login_required
 def delete_note(note_id):
-    db = get_db()
-    
     # Verify note belongs to user
-    note_check = db.execute(
-        "SELECT id FROM user_notes WHERE id = ? AND user_id = ?", 
-        (note_id, current_user.id)
-    ).fetchone()
+    note_check = execute_query(
+        "SELECT id FROM user_notes WHERE id = %s AND user_id = %s", 
+        (note_id, current_user.id), fetch_one=True
+    )
     
     if not note_check:
         return jsonify({"error": "Note not found or unauthorized"}), 404
     
     try:
-        db.execute("DELETE FROM user_notes WHERE id = ? AND user_id = ?", 
+        execute_query("DELETE FROM user_notes WHERE id = %s AND user_id = %s", 
                   (note_id, current_user.id))
-        db.commit()
         return jsonify({'status': 'success', 'message': 'Note deleted'}), 200
-    except sqlite3.Error as e:
-        db.rollback()
+    except psycopg2.Error as e:
         handle_database_error(e, "note deletion")
         return safe_error_response("Failed to delete note")
 
 @app.route('/api/analytics', methods=['GET'])
 @login_required
 def get_analytics():
-    db = get_db()
-    
     # Get user's task statistics
-    total_tasks_cursor = db.execute(
-        "SELECT COUNT(*) as total FROM user_tasks WHERE user_id = ?", (current_user.id,)
+    total_tasks_result = execute_query(
+        "SELECT COUNT(*) as total FROM user_tasks WHERE user_id = %s", (current_user.id,), fetch_one=True
     )
-    total_tasks = total_tasks_cursor.fetchone()['total']
+    total_tasks = total_tasks_result['total'] if total_tasks_result else 0
     
-    completed_tasks_cursor = db.execute(
-        "SELECT COUNT(*) as completed FROM user_tasks WHERE user_id = ? AND status = 'completed'", 
-        (current_user.id,)
+    completed_tasks_result = execute_query(
+        "SELECT COUNT(*) as completed FROM user_tasks WHERE user_id = %s AND status = 'completed'", 
+        (current_user.id,), fetch_one=True
     )
-    completed_tasks = completed_tasks_cursor.fetchone()['completed']
+    completed_tasks = completed_tasks_result['completed'] if completed_tasks_result else 0
     
     # Get total time worked (in minutes)
-    total_time_cursor = db.execute(
-        "SELECT SUM(time_spent) as total_time FROM user_tasks WHERE user_id = ?", (current_user.id,)
+    total_time_result = execute_query(
+        "SELECT SUM(time_spent) as total_time FROM user_tasks WHERE user_id = %s", (current_user.id,), fetch_one=True
     )
-    total_time_ms = total_time_cursor.fetchone()['total_time'] or 0
+    total_time_ms = total_time_result['total_time'] if total_time_result and total_time_result['total_time'] else 0
     total_time_hours = total_time_ms / (1000 * 60 * 60)  # Convert to hours
     
-    # Get productivity by day of week
-    productivity_cursor = db.execute("""
+    # Get productivity by day of week (PostgreSQL version)
+    productivity_data = execute_query("""
         SELECT 
-            CASE strftime('%w', entry_date)
-                WHEN '0' THEN 'Sunday'
-                WHEN '1' THEN 'Monday' 
-                WHEN '2' THEN 'Tuesday'
-                WHEN '3' THEN 'Wednesday'
-                WHEN '4' THEN 'Thursday'
-                WHEN '5' THEN 'Friday'
-                WHEN '6' THEN 'Saturday'
+            CASE EXTRACT(DOW FROM entry_date::date)
+                WHEN 0 THEN 'Sunday'
+                WHEN 1 THEN 'Monday' 
+                WHEN 2 THEN 'Tuesday'
+                WHEN 3 THEN 'Wednesday'
+                WHEN 4 THEN 'Thursday'
+                WHEN 5 THEN 'Friday'
+                WHEN 6 THEN 'Saturday'
             END as day_name,
             COUNT(*) as tasks_completed,
             SUM(time_spent) as time_spent
         FROM user_tasks 
-        WHERE user_id = ? AND status = 'completed'
-        GROUP BY strftime('%w', entry_date)
-        ORDER BY strftime('%w', entry_date)
-    """, (current_user.id,))
+        WHERE user_id = %s AND status = 'completed'
+        GROUP BY EXTRACT(DOW FROM entry_date::date)
+        ORDER BY EXTRACT(DOW FROM entry_date::date)
+    """, (current_user.id,), fetch_all=True)
     
-    productivity_by_day = [dict(row) for row in productivity_cursor]
+    productivity_by_day = [dict(row) for row in productivity_data] if productivity_data else []
     
     # Get current streak
-    streak_cursor = db.execute("""
+    streak_data = execute_query("""
         SELECT DISTINCT entry_date FROM user_tasks 
-        WHERE user_id = ? AND status = 'completed' 
+        WHERE user_id = %s AND status = 'completed' 
         ORDER BY entry_date DESC
-    """, (current_user.id,))
+    """, (current_user.id,), fetch_all=True)
     
-    completed_dates = [row['entry_date'] for row in streak_cursor]
+    completed_dates = [str(row['entry_date']) for row in streak_data] if streak_data else []
     current_streak = calculate_streak(completed_dates)
     
-    # Get monthly activity (last 12 months)
-    monthly_cursor = db.execute("""
+    # Get monthly activity (last 12 months) - PostgreSQL version
+    monthly_data = execute_query("""
         SELECT 
-            strftime('%Y-%m', entry_date) as month,
+            TO_CHAR(entry_date::date, 'YYYY-MM') as month,
             COUNT(*) as tasks_completed,
             SUM(time_spent) as time_spent
         FROM user_tasks 
-        WHERE user_id = ? AND status = 'completed'
-        GROUP BY strftime('%Y-%m', entry_date)
+        WHERE user_id = %s AND status = 'completed'
+        GROUP BY TO_CHAR(entry_date::date, 'YYYY-MM')
         ORDER BY month DESC
         LIMIT 12
-    """, (current_user.id,))
+    """, (current_user.id,), fetch_all=True)
     
-    monthly_activity = [dict(row) for row in monthly_cursor]
+    monthly_activity = [dict(row) for row in monthly_data] if monthly_data else []
     
     # Get achievements
     achievements = calculate_achievements(current_user.id, total_tasks, completed_tasks, total_time_hours, current_streak)
@@ -766,7 +857,7 @@ def calculate_streak(completed_dates):
     if not completed_dates:
         return 0
     
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, date
     today = datetime.now().date()
     current_streak = 0
     
@@ -818,35 +909,34 @@ def calculate_achievements(user_id, total_tasks, completed_tasks, total_hours, s
 @login_required
 def get_profile_stats():
     """Get comprehensive profile statistics for the user"""
-    db = get_db()
     
     # Get total tasks
-    total_tasks_cursor = db.execute(
-        "SELECT COUNT(*) as total FROM user_tasks WHERE user_id = ?", (current_user.id,)
+    total_tasks_result = execute_query(
+        "SELECT COUNT(*) as total FROM user_tasks WHERE user_id = %s", (current_user.id,), fetch_one=True
     )
-    total_tasks = total_tasks_cursor.fetchone()['total']
+    total_tasks = total_tasks_result['total'] if total_tasks_result else 0
     
     # Get completed tasks
-    completed_tasks_cursor = db.execute(
-        "SELECT COUNT(*) as completed FROM user_tasks WHERE user_id = ? AND status = 'completed'", 
-        (current_user.id,)
+    completed_tasks_result = execute_query(
+        "SELECT COUNT(*) as completed FROM user_tasks WHERE user_id = %s AND status = 'completed'", 
+        (current_user.id,), fetch_one=True
     )
-    completed_tasks = completed_tasks_cursor.fetchone()['completed']
+    completed_tasks = completed_tasks_result['completed'] if completed_tasks_result else 0
     
     # Get total time worked (in hours)
-    total_time_cursor = db.execute(
-        "SELECT SUM(time_spent) as total_time FROM user_tasks WHERE user_id = ?", (current_user.id,)
+    total_time_result = execute_query(
+        "SELECT SUM(time_spent) as total_time FROM user_tasks WHERE user_id = %s", (current_user.id,), fetch_one=True
     )
-    total_time_ms = total_time_cursor.fetchone()['total_time'] or 0
+    total_time_ms = total_time_result['total_time'] if total_time_result and total_time_result['total_time'] else 0
     total_hours = round(total_time_ms / (1000 * 60 * 60), 1)
     
     # Get current streak
-    streak_cursor = db.execute("""
+    streak_data = execute_query("""
         SELECT DISTINCT entry_date FROM user_tasks 
-        WHERE user_id = ? AND status = 'completed' 
+        WHERE user_id = %s AND status = 'completed' 
         ORDER BY entry_date DESC
-    """, (current_user.id,))
-    completed_dates = [row['entry_date'] for row in streak_cursor]
+    """, (current_user.id,), fetch_all=True)
+    completed_dates = [str(row['entry_date']) for row in streak_data] if streak_data else []
     current_streak = calculate_streak(completed_dates)
     
     # Calculate longest streak
@@ -892,35 +982,34 @@ def calculate_longest_streak(completed_dates):
 @login_required
 def log_activity_api():
     data = request.json
-    db = get_db()
     try:
-        db.execute(
-            "INSERT INTO activity_log (user_id, message, timestamp, task_db_id) VALUES (?, ?, ?, ?)",
+        execute_query(
+            "INSERT INTO activity_log (user_id, message, timestamp, task_db_id) VALUES (%s, %s, %s, %s)",
             (current_user.id, data['message'], datetime.now(), data.get('task_db_id'))
         )
-        db.commit()
         return jsonify({'status': 'success'})
-    except sqlite3.Error as e:
-        db.rollback()
+    except psycopg2.Error as e:
         handle_database_error(e, "activity logging")
         return safe_error_response("Failed to log activity")
 
 # --- Timer Management API ---
 @app.route('/api/timer/start', methods=['POST'])
 @login_required
+@csrf.exempt  # Will handle CSRF in the function
 def start_timer():
     data = request.json
-    task_id = data.get('task_id')
+    
+    # Security: Validate request data
+    is_valid, error_msg = validate_timer_request(data, ['task_id', 'session_id'])
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+    
+    task_id = int(data.get('task_id'))  # Convert to int after validation
     session_id = data.get('session_id')
     
-    if not task_id or not session_id:
-        return jsonify({"error": "task_id and session_id are required"}), 400
-    
-    db = get_db()
-    
     # Verify task belongs to user
-    task = db.execute("SELECT id, status FROM user_tasks WHERE id = ? AND user_id = ?", 
-                     (task_id, current_user.id)).fetchone()
+    task = execute_query("SELECT id, status FROM user_tasks WHERE id = %s AND user_id = %s", 
+                     (task_id, current_user.id), fetch_one=True)
     if not task:
         return jsonify({"error": "Task not found or unauthorized"}), 404
     
@@ -929,40 +1018,39 @@ def start_timer():
     
     try:
         # Stop any other running timers for this user
-        db.execute(
+        execute_query(
             """UPDATE user_tasks SET 
                status = CASE WHEN status = 'in-progress' THEN 'paused' ELSE status END,
                timer_start_time = NULL, 
                timer_session_id = NULL
-               WHERE user_id = ? AND timer_start_time IS NOT NULL""",
+               WHERE user_id = %s AND timer_start_time IS NOT NULL""",
             (current_user.id,)
         )
         
         # Start the new timer
         now = datetime.now()
-        db.execute(
+        execute_query(
             """UPDATE user_tasks SET 
                status = 'in-progress',
-               timer_start_time = ?,
-               timer_session_id = ?,
-               last_sync_time = ?
-               WHERE id = ? AND user_id = ?""",
+               timer_start_time = %s,
+               timer_session_id = %s,
+               last_sync_time = %s
+               WHERE id = %s AND user_id = %s""",
             (now, session_id, now, task_id, current_user.id)
         )
-        db.commit()
         
         return jsonify({
             'status': 'success',
             'timer_start_time': now.isoformat(),
             'session_id': session_id
         })
-    except sqlite3.Error as e:
-        db.rollback()
+    except psycopg2.Error as e:
         handle_database_error(e, "timer start")
         return safe_error_response("Failed to start timer")
 
 @app.route('/api/timer/pause', methods=['POST'])
 @login_required
+@csrf.exempt  # Will handle CSRF in the function
 def pause_timer():
     data = request.json
     task_id = data.get('task_id')
@@ -971,15 +1059,13 @@ def pause_timer():
     if not task_id or not session_id:
         return jsonify({"error": "task_id and session_id are required"}), 400
     
-    db = get_db()
-    
     # Get current timer state
-    task = db.execute(
+    task = execute_query(
         """SELECT timer_start_time, timer_session_id, time_spent 
            FROM user_tasks 
-           WHERE id = ? AND user_id = ? AND timer_session_id = ?""",
-        (task_id, current_user.id, session_id)
-    ).fetchone()
+           WHERE id = %s AND user_id = %s AND timer_session_id = %s""",
+        (task_id, current_user.id, session_id), fetch_one=True
+    )
     
     if not task or not task['timer_start_time']:
         return jsonify({"error": "No active timer found for this task"}), 400
@@ -995,30 +1081,29 @@ def pause_timer():
         new_time_spent = task['time_spent'] + elapsed_ms
         
         # Pause the timer
-        db.execute(
+        execute_query(
             """UPDATE user_tasks SET 
                status = 'paused',
-               time_spent = ?,
+               time_spent = %s,
                timer_start_time = NULL,
                timer_session_id = NULL,
-               last_sync_time = ?
-               WHERE id = ? AND user_id = ?""",
+               last_sync_time = %s
+               WHERE id = %s AND user_id = %s""",
             (new_time_spent, datetime.now(), task_id, current_user.id)
         )
-        db.commit()
         
         return jsonify({
             'status': 'success',
             'time_spent': new_time_spent,
             'elapsed_in_session': elapsed_ms
         })
-    except sqlite3.Error as e:
-        db.rollback()
+    except psycopg2.Error as e:
         handle_database_error(e, "timer pause")
         return safe_error_response("Failed to pause timer")
 
 @app.route('/api/timer/stop', methods=['POST'])
 @login_required
+@csrf.exempt  # Will handle CSRF in the function
 def stop_timer():
     data = request.json
     task_id = data.get('task_id')
@@ -1027,15 +1112,13 @@ def stop_timer():
     if not task_id or not session_id:
         return jsonify({"error": "task_id and session_id are required"}), 400
     
-    db = get_db()
-    
     # Get current timer state
-    task = db.execute(
+    task = execute_query(
         """SELECT timer_start_time, timer_session_id, time_spent, title 
            FROM user_tasks 
-           WHERE id = ? AND user_id = ? AND timer_session_id = ?""",
-        (task_id, current_user.id, session_id)
-    ).fetchone()
+           WHERE id = %s AND user_id = %s AND timer_session_id = %s""",
+        (task_id, current_user.id, session_id), fetch_one=True
+    )
     
     if not task:
         return jsonify({"error": "Task not found or session mismatch"}), 400
@@ -1054,38 +1137,36 @@ def stop_timer():
         new_time_spent = task['time_spent'] + elapsed_ms
         
         # Stop the timer and mark as completed
-        db.execute(
+        execute_query(
             """UPDATE user_tasks SET 
                status = 'completed',
-               time_spent = ?,
+               time_spent = %s,
                timer_start_time = NULL,
                timer_session_id = NULL,
-               last_sync_time = ?
-               WHERE id = ? AND user_id = ?""",
+               last_sync_time = %s
+               WHERE id = %s AND user_id = %s""",
             (new_time_spent, datetime.now(), task_id, current_user.id)
         )
         
         # Log the completion
-        db.execute(
-            "INSERT INTO activity_log (user_id, message, timestamp, task_db_id) VALUES (?, ?, ?, ?)",
+        execute_query(
+            "INSERT INTO activity_log (user_id, message, timestamp, task_db_id) VALUES (%s, %s, %s, %s)",
             (current_user.id, f"Completed task: {task['title']}", datetime.now(), task_id)
         )
-        
-        db.commit()
         
         return jsonify({
             'status': 'success',
             'time_spent': new_time_spent,
             'elapsed_in_session': elapsed_ms
         })
-    except sqlite3.Error as e:
-        db.rollback()
+    except psycopg2.Error as e:
         handle_database_error(e, "timer stop")
         return safe_error_response("Failed to stop timer")
 
 @app.route('/api/timer/sync', methods=['POST'])
 @login_required
-@limiter.limit("120 per minute")  # Allow frequent sync but prevent abuse
+@csrf.exempt  # Will handle CSRF in the function
+@limiter.limit("1000 per minute")  # Support concurrent timer sessions (was 120)
 def sync_timer():
     data = request.json
     task_id = data.get('task_id')
@@ -1094,15 +1175,13 @@ def sync_timer():
     if not task_id or not session_id:
         return jsonify({"error": "task_id and session_id are required"}), 400
     
-    db = get_db()
-    
     # Get current timer state
-    task = db.execute(
+    task = execute_query(
         """SELECT timer_start_time, timer_session_id, time_spent, status, title
            FROM user_tasks 
-           WHERE id = ? AND user_id = ?""",
-        (task_id, current_user.id)
-    ).fetchone()
+           WHERE id = %s AND user_id = %s""",
+        (task_id, current_user.id), fetch_one=True
+    )
     
     if not task:
         return jsonify({"error": "Task not found"}), 404
@@ -1126,11 +1205,10 @@ def sync_timer():
     
     try:
         # Update last sync time
-        db.execute(
-            "UPDATE user_tasks SET last_sync_time = ? WHERE id = ? AND user_id = ?",
+        execute_query(
+            "UPDATE user_tasks SET last_sync_time = %s WHERE id = %s AND user_id = %s",
             (datetime.now(), task_id, current_user.id)
         )
-        db.commit()
         
         return jsonify({
             'status': 'success',
@@ -1140,23 +1218,20 @@ def sync_timer():
             'total_display_time': task['time_spent'] + current_elapsed_ms,
             'timer_start_time': task['timer_start_time']
         })
-    except sqlite3.Error as e:
-        db.rollback()
+    except psycopg2.Error as e:
         handle_database_error(e, "timer sync")
         return safe_error_response("Failed to sync timer")
 
 @app.route('/api/timer/status/<int:task_id>', methods=['GET'])
 @login_required
-@limiter.limit("120 per minute")  # Allow frequent status checks but prevent abuse
+@limiter.limit("1000 per minute")  # Support concurrent timer sessions (was 120)
 def get_timer_status(task_id):
-    db = get_db()
-    
-    task = db.execute(
+    task = execute_query(
         """SELECT status, time_spent, timer_start_time, timer_session_id, title
            FROM user_tasks 
-           WHERE id = ? AND user_id = ?""",
-        (task_id, current_user.id)
-    ).fetchone()
+           WHERE id = %s AND user_id = %s""",
+        (task_id, current_user.id), fetch_one=True
+    )
     
     if not task:
         return jsonify({"error": "Task not found"}), 404
@@ -1237,8 +1312,7 @@ def ratelimit_handler(e):
 def health_check():
     try:
         # Simple database health check
-        db = get_db()
-        db.execute('SELECT 1').fetchone()
+        execute_query('SELECT 1', fetch_one=True)
         return jsonify({
             'status': 'healthy',
             'timestamp': datetime.now().isoformat(),
@@ -1265,19 +1339,8 @@ def ping():
 # Note: Rate limiting is applied via decorators on existing routes
 
 if __name__ == '__main__':
-    # Auto-initialize database for production if it doesn't exist
-    if not os.path.exists(DATABASE):
-        print(f"Database at {DATABASE} not found. Initializing...")
-        with app.app_context():
-            init_db()
-    
-    # Ensure instance folder exists for local dev with SQLite
-    if not os.path.exists(os.path.join(os.getcwd(), 'instance')):
-        try:
-            os.makedirs(os.path.join(os.getcwd(), 'instance'))
-            print("Created local 'instance' directory.")
-        except OSError as e:
-            print(f"Error creating local 'instance' directory: {e}")
+    # PostgreSQL database is initialized automatically via ensure_database_initialized()
+    # No need for local file checks since we're using cloud database
 
     # Run with different settings for development vs production
     if os.environ.get('FLASK_ENV') == 'production':

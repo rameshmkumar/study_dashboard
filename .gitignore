@@ -13,9 +13,19 @@ venv/
 .venv/
 env/
 .env
+.env.local
+.env.production
 ENV/
 env.bak/
 venv.bak/
+
+# Credential files - NEVER COMMIT THESE
+set_credentials.sh
+credentials.sh
+.credentials
+secrets/
+*.pem
+*.key
 
 # Instance folder (contains the local SQLite database)
 instance/

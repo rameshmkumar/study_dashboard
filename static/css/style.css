@@ -411,6 +411,13 @@ body.light-mode input[type="time"].form-control::-webkit-calendar-picker-indicat
   border-left: 4px solid var(--accent-color);
 }
 
+.schedule-item.selected-task {
+  background: rgba(59, 130, 246, 0.1) !important;
+  border-color: #3b82f6 !important;
+  box-shadow: 0 4px 20px rgba(59, 130, 246, 0.15);
+  border-left: 4px solid #3b82f6;
+}
+
 .schedule-item.completed-task {
   background: rgba(16, 185, 129, 0.08) !important;
   border-color: var(--success-color) !important;

@@ -1,38 +1,87 @@
 # FocusFlow Deployment Guide
 
-## 🚀 Quick Deployment Options
+## 🆓 **TRULY FREE** Hosting Options (Updated 2024)
 
-### Option 1: Railway (Recommended)
-Railway offers the best free tier for Flask applications with persistent storage.
+### Option 1: Render (Recommended - Best Free Option)
+**Completely free with persistent storage - no credit card required!**
 
 #### Steps:
-1. **Create Railway Account**: Go to [railway.app](https://railway.app) and sign up
-2. **Connect GitHub**: Link your GitHub account
-3. **Push to GitHub**: 
-   ```bash
-   git add .
-   git commit -m "🛡️ Ready for Railway deployment"
-   git push origin main
-   ```
-4. **Deploy on Railway**:
-   - Click "Deploy from GitHub repo"
-   - Select your FocusFlow repository
-   - Railway will auto-detect the Flask app
-5. **Set Environment Variables**:
-   - Go to your project settings
-   - Add: `SECRET_KEY` = `your_strong_secret_key_here`
-   - Add: `ENVIRONMENT` = `production`
-   - Add: `FLASK_ENV` = `production`
+1. **Create Render Account**: Go to [render.com](https://render.com) - sign up free
+2. **Connect GitHub Repository**
+3. **Create Web Service**:
+   - Click "New +" → "Web Service"
+   - Connect your GitHub: `rameshmkumar/study_dashboard`
+   - Name: `focusflow-app`
+   - Branch: `main`
+   - Build Command: `pip install -r requirements.txt`
+   - Start Command: `gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120`
+4. **Set Environment Variables**:
+   - `SECRET_KEY` = `LjUiTHrxUqRA7rzd6bM07hxGov0te09dM428pEONGvs`
+   - `DATABASE_URL` = `sqlite:///var/data/focus_flow.db`
+   - `ENVIRONMENT` = `production`
+   - `FLASK_ENV` = `production`
+5. **Add Persistent Disk** (for database):
+   - Go to your service → "Disks"
+   - Add disk: Mount path `/var/data`, Size 1GB (free)
 
-#### Railway Configuration:
-- ✅ Automatically uses `railway.json` and `Procfile`
-- ✅ 500 hours/month free tier
-- ✅ 1GB persistent storage
-- ✅ Custom domain support
+#### Render Benefits:
+- ✅ **750 hours/month** (31+ days) - completely free
+- ✅ **1GB persistent storage** for your database
+- ✅ **Custom domain** support
+- ✅ **Automatic HTTPS**
+- ⚠️ Spins down after 15 min (wakes up in ~30 seconds)
+
+### Option 2: PythonAnywhere (Best for Always-On)
+**Never sleeps - perfect for a production app that's always available!**
+
+#### Steps:
+1. **Create Account**: Go to [pythonanywhere.com](https://pythonanywhere.com)
+2. **Upload Code**: Use Git or file upload
+3. **Create Web App**:
+   - Dashboard → "Web" → "Add new web app"
+   - Choose Flask
+   - Point to your `app.py`
+4. **Set Environment Variables** in WSGI file
+5. **Database**: SQLite works perfectly
+
+#### PythonAnywhere Benefits:
+- ✅ **Always online** - never sleeps
+- ✅ **100MB storage** (enough for your app)
+- ✅ **Custom domain** on paid plans
+- ✅ **Easy SSH access**
+
+### Option 3: Glitch (Great for Quick Testing)
+**Simple deployment with live code editing!**
+
+#### Steps:
+1. **Go to Glitch**: Visit [glitch.com](https://glitch.com)
+2. **Import from GitHub**: 
+   - Click "New Project" → "Import from GitHub"
+   - Enter: `https://github.com/rameshmkumar/study_dashboard`
+3. **Set Environment Variables**: 
+   - Create `.env` file in Glitch editor
+   - Add your SECRET_KEY and other variables
+4. **Auto-deploys**: Your app will be live immediately
+
+#### Glitch Benefits:
+- ✅ **1000 hours/month** free
+- ✅ **Live code editing** in browser
+- ✅ **Instant deployment**
+- ⚠️ Sleeps after 5 minutes of inactivity
 
 ---
 
-### Option 2: Render
+## 📊 **Comparison Table**
+
+| Platform | Free Tier | Always On? | Storage | Best For |
+|----------|-----------|------------|---------|----------|
+| **Render** | 750h/month | No (sleeps 15min) | 1GB | Production apps |
+| **PythonAnywhere** | Unlimited | Yes ✅ | 100MB | Always-on apps |
+| **Glitch** | 1000h/month | No (sleeps 5min) | 200MB | Quick prototypes |
+
+---
+
+### Option 4: Render (Alternative Documentation)
 Great alternative with 750 hours/month but spins down after inactivity.
 
 #### Steps:
