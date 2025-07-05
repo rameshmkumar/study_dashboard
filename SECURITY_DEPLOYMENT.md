@@ -17,7 +17,7 @@ This version includes critical security fixes for production deployment:
 
 ```bash
 # Database (Required)
-DATABASE_URL=postgresql://postgres.hvzignukqjpvonrjkkum:tn69AH4350@@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres
+DATABASE_URL=postgresql://username:password@host:port/database
 
 # Security (Required - Generate new for production)
 SECRET_KEY=GENERATE_NEW_STRONG_SECRET_KEY_HERE

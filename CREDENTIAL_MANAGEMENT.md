@@ -51,7 +51,7 @@ python -c "import secrets; print('SECRET_KEY=' + secrets.token_urlsafe(32))"
 
 Add these variables:
 ```
-DATABASE_URL=postgresql://postgres.hvzignukqjpvonrjkkum:tn69AH4350@@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres
+DATABASE_URL=postgresql://username:password@host:port/database
 SECRET_KEY=<PASTE_NEWLY_GENERATED_KEY_HERE>
 FLASK_ENV=production
 ENVIRONMENT=production
