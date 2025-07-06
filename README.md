@@ -1,202 +1,263 @@
-# 🎯 FocusFlow - Productivity Dashboard
+# FocusFlow - Personal Productivity Dashboard
 
-A secure, feature-rich productivity application built with Flask that helps you track tasks, manage time, and maintain focus streaks.
+A comprehensive task management and productivity tracking application built with Flask, PostgreSQL, and vanilla JavaScript.
 
-## ✨ Features
+## Features
 
-- **Task Management**: Create, edit, and track daily tasks with time estimates
-- **Pomodoro Timer**: Built-in timer with pause/resume functionality  
-- **Progress Tracking**: Visual progress bars and completion statistics
-- **Streak Tracking**: Daily completion streaks to maintain momentum
-- **Notes System**: Create and organize daily notes by type
-- **Analytics**: Detailed productivity analytics and achievements
-- **User Profiles**: Secure user accounts with strong password policies
-- **Dark/Light Theme**: Responsive design with theme switching
+### 📋 Task Management
+- Create, edit, and organize daily tasks
+- Set task priorities, start times, and estimated durations
+- Track task completion status (pending, in-progress, completed)
+- Visual task scheduling with time-based organization
 
-## 🛡️ Security Features
+### ⏱️ Time Tracking
+- Built-in timer with start/pause/stop functionality
+- Automatic time tracking for tasks in progress
+- Session-based timing with browser sync
+- Time spent analytics and reporting
 
-- **CSRF Protection**: All forms and API endpoints protected against CSRF attacks
-- **Strong Password Policy**: Enforced complexity requirements (8+ chars, mixed case, numbers, special chars)
-- **Rate Limiting**: API abuse prevention with intelligent rate limiting
-- **Secure Headers**: Content Security Policy, XSS protection, and more
-- **Session Security**: Secure session management with forced re-auth on password changes
-- **Error Sanitization**: Safe error handling that doesn't expose sensitive information
+### 📊 Analytics & Insights
+- Daily productivity summaries
+- Time allocation across different task categories
+- Progress visualization with charts
+- Activity logging and history tracking
 
-## 🚀 Quick Start
+### 📝 Notes & Documentation
+- Integrated note-taking system
+- Link notes to specific dates and tasks
+- Rich text editing capabilities
+- Searchable note archive
 
-### Local Development
+### 🔒 Security Features
+- User authentication and authorization
+- CSRF protection for all forms
+- Rate limiting to prevent abuse
+- Session management with timeout
+- Input validation and sanitization
 
-1. **Clone the repository**
+## Tech Stack
+
+**Backend:**
+- Flask (Python web framework)
+- PostgreSQL (Primary database)
+- SQLite (Development/fallback database)
+- Flask-Login (Authentication)
+- Flask-WTF (CSRF protection)
+- Flask-Limiter (Rate limiting)
+
+**Frontend:**
+- Vanilla JavaScript (ES6+)
+- HTML5 & CSS3
+- Responsive design
+- Chart.js for data visualization
+
+**Infrastructure:**
+- Docker containerization
+- Environment-based configuration
+- Production-ready deployment setup
+
+## Installation
+
+### Prerequisites
+- Python 3.9+
+- PostgreSQL 13+ (for production)
+- Node.js (for frontend dependencies, optional)
+
+### Local Development Setup
+
+1. **Clone the repository:**
    ```bash
-   git clone <your-repo-url>
+   git clone https://github.com/yourusername/focusflow.git
    cd focusflow
    ```
 
-2. **Create virtual environment**
+2. **Create virtual environment:**
    ```bash
    python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
-3. **Install dependencies**
+3. **Install dependencies:**
    ```bash
    pip install -r requirements.txt
    ```
 
-4. **Set up environment**
+4. **Set up environment variables:**
    ```bash
    cp .env.example .env
-   # Edit .env and set a strong SECRET_KEY
+   # Edit .env with your configuration
    ```
 
-5. **Initialize database**
+5. **Initialize database:**
+   ```bash
+   python app.py  # Auto-initializes database on first run
+   ```
+
+6. **Run the application:**
    ```bash
    python app.py
-   # Database will be automatically created on first run
    ```
 
-6. **Run the application**
+   Visit `http://localhost:5000` in your browser.
+
+### Production Deployment
+
+#### Using Docker
+
+1. **Build and run with Docker Compose:**
    ```bash
-   python app.py
+   docker-compose up --build
    ```
 
-Visit `http://localhost:5001` to access the application.
+#### Manual Deployment
 
-## 🌐 Free Deployment Options
-
-### Railway (Recommended)
-
-1. **Push to GitHub** (follow Git setup below)
-2. **Connect Railway**:
-   - Go to [railway.app](https://railway.app)
-   - Sign up with GitHub
-   - Click "New Project" → "Deploy from GitHub repo"
-   - Select your repository
-
-3. **Set Environment Variables**:
-   ```
-   SECRET_KEY=your_very_strong_random_secret_key_here
-   FLASK_ENV=production
-   ENVIRONMENT=production
+1. **Set production environment variables:**
+   ```bash
+   export FLASK_ENV=production
+   export SECRET_KEY=your-secret-key
+   export DATABASE_URL=postgresql://user:pass@host:port/dbname
    ```
 
-4. **Deploy automatically** - Railway handles the rest!
+2. **Run with Gunicorn:**
+   ```bash
+   gunicorn --bind 0.0.0.0:5000 app:app
+   ```
 
-### Alternative: Render
-
-1. Go to [render.com](https://render.com) and connect GitHub
-2. Create "New Web Service" from your repo
-3. Configure:
-   - **Build Command**: `pip install -r requirements.txt`
-   - **Start Command**: `gunicorn app:app --bind 0.0.0.0:$PORT`
-4. Add the same environment variables
-5. Deploy
-
-## 📝 Git Setup Guide
-
-If you haven't set up Git yet:
-
-```bash
-# Initialize git (if not already done)
-git init
-
-# Add all files
-git add .
-
-# Make initial commit
-git commit -m "Initial commit: FocusFlow productivity app with security fixes"
-
-# Add remote repository (replace with your GitHub repo URL)
-git remote add origin https://github.com/YOUR_USERNAME/focusflow.git
-
-# Push to GitHub
-git push -u origin main
-```
-
-## 🔧 Configuration
+## Configuration
 
 ### Environment Variables
 
-| Variable | Description | Default | Required |
-|----------|-------------|---------|----------|
-| `SECRET_KEY` | Flask secret key for sessions | ⚠️ **Must set in production** | Yes |
-| `FLASK_ENV` | Environment (development/production) | development | No |
-| `DATABASE_URL` | Database connection string | SQLite local file | No |
-| `WTF_CSRF_ENABLED` | Enable CSRF protection | True | No |
-| `LOG_LEVEL` | Logging level | INFO | No |
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SECRET_KEY` | Flask secret key | Random generated |
+| `DATABASE_URL` | PostgreSQL connection string | SQLite fallback |
+| `FLASK_ENV` | Environment mode | `development` |
+| `SESSION_COOKIE_SECURE` | HTTPS-only cookies | `False` |
+| `SESSION_COOKIE_HTTPONLY` | HTTP-only cookies | `True` |
+| `WTF_CSRF_TIME_LIMIT` | CSRF token timeout | `3600` |
 
-⚠️ **CRITICAL**: Set a strong `SECRET_KEY` in production or the app will refuse to start!
+### Database Configuration
 
-## 📁 Project Structure
+The application supports both PostgreSQL and SQLite:
+- **PostgreSQL**: Recommended for production
+- **SQLite**: Used for development and testing
 
+Database schema is automatically created on first run.
+
+## API Endpoints
+
+### Authentication
+- `POST /login` - User login
+- `POST /logout` - User logout
+- `POST /register` - User registration
+
+### Task Management
+- `GET /api/user-tasks` - Get user's tasks
+- `POST /api/user-tasks` - Create new task
+- `PUT /api/user-tasks/<id>` - Update task
+- `DELETE /api/user-tasks/<id>` - Delete task
+
+### Timer Operations
+- `POST /api/timer/start` - Start timer for task
+- `POST /api/timer/pause` - Pause running timer
+- `POST /api/timer/stop` - Stop timer and save time
+- `POST /api/timer/sync` - Sync timer with server
+
+### Analytics
+- `GET /api/daily-summary` - Get daily productivity summary
+- `GET /api/weekly-summary` - Get weekly analytics
+- `GET /api/activity-log` - Get activity history
+
+## Development
+
+### Project Structure
 ```
 focusflow/
 ├── app.py                 # Main Flask application
-├── schema.sql            # Database schema
-├── requirements.txt      # Python dependencies
-├── Procfile             # Deployment configuration
-├── railway.json         # Railway-specific config
-├── .env.example         # Environment variables template
+├── requirements.txt       # Python dependencies
+├── docker-compose.yml     # Docker configuration
 ├── static/
-│   ├── css/
-│   │   └── style.css    # Application styles
-│   └── js/
-│       └── dashboard.js # Frontend JavaScript
-├── templates/           # Jinja2 templates
-│   ├── layout.html     # Base template
-│   ├── home.html       # Landing page
-│   ├── login.html      # Login form
-│   ├── signup.html     # Registration form
-│   ├── dashboard.html  # Main app interface
-│   ├── profile.html    # User profile
-│   └── achievements.html
-└── instance/           # Local database storage (git ignored)
+│   ├── css/              # Stylesheets
+│   ├── js/               # JavaScript files
+│   └── images/           # Static images
+├── templates/            # HTML templates
+├── schema.sql           # SQLite database schema
+├── schema_postgresql.sql # PostgreSQL database schema
+└── README.md            # This file
 ```
 
-## 🔐 Security Notes
+### Key Components
 
-- All user inputs are validated and sanitized
-- Database queries use parameterized statements to prevent SQL injection
-- CSRF tokens are required for all state-changing operations
-- Rate limiting prevents API abuse
-- Secure headers protect against common web vulnerabilities
-- Strong password policies are enforced
-- Session management follows security best practices
+**Backend (app.py):**
+- Flask application setup and configuration
+- Database connection management
+- API route handlers
+- Authentication and security middleware
+- Timer and task management logic
 
-## 🐛 Troubleshooting
+**Frontend (static/js/dashboard.js):**
+- Task creation and management UI
+- Timer functionality and synchronization
+- Data visualization and charts
+- Real-time updates and notifications
 
-### Common Issues
+### Database Schema
 
-1. **App won't start in production**
-   - Check that `SECRET_KEY` is set to a strong, unique value
-   - Verify all required environment variables are set
+**Core Tables:**
+- `users` - User accounts and authentication
+- `user_tasks` - Task management and tracking
+- `notes` - User notes and documentation
+- `activity_log` - User activity tracking
 
-2. **Database errors**
-   - Ensure the application has write permissions to the database location
-   - Check that `schema.sql` exists and is valid
+**Timer Fields:**
+- `timer_start_time` - Current session start time
+- `timer_session_id` - Unique session identifier
+- `time_spent` - Total accumulated time
+- `last_sync_time` - Last synchronization timestamp
 
-3. **CSRF errors on forms**
-   - Ensure JavaScript is enabled for CSRF token handling
-   - Check that `WTF_CSRF_ENABLED=True` in environment
+## Features in Detail
 
-## 🤝 Contributing
+### Task Management System
+- **Smart Scheduling**: Tasks can be scheduled with start times and durations
+- **Priority Management**: Three-level priority system (high, medium, low)
+- **Status Tracking**: Real-time status updates (pending → in-progress → completed)
+- **Category Organization**: Automatic categorization and grouping
+
+### Timer System
+- **Session Management**: Unique session IDs prevent timer conflicts
+- **Browser Sync**: Timer state persists across browser tabs and sessions
+- **Automatic Backup**: Regular server synchronization prevents data loss
+- **Conflict Resolution**: Handles multiple timer sessions gracefully
+
+### Analytics Dashboard
+- **Daily Summaries**: Comprehensive productivity metrics
+- **Time Allocation**: Visual breakdown of time spent by category
+- **Progress Tracking**: Historical data and trends
+- **Activity Logging**: Detailed audit trail of user actions
+
+### Security Implementation
+- **Input Validation**: Comprehensive sanitization of user inputs
+- **SQL Injection Prevention**: Parameterized queries throughout
+- **CSRF Protection**: Token-based request validation
+- **Rate Limiting**: API endpoint protection against abuse
+- **Session Security**: Secure cookie configuration and timeout
+
+## Contributing
 
 1. Fork the repository
-2. Create a feature branch: `git checkout -b feature-name`
-3. Make changes and test thoroughly
-4. Commit with descriptive messages
-5. Push and create a Pull Request
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-## 📄 License
+## License
 
-This project is open source. See LICENSE file for details.
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## 🆘 Support
+## Support
 
-- **Issues**: Report bugs via GitHub Issues
-- **Documentation**: Check this README and code comments
-- **Security**: Report security issues privately to maintainers
+For questions, issues, or contributions, please open an issue on GitHub or contact the maintainer.
 
 ---
 
-**⚡ Ready to boost your productivity? Deploy FocusFlow today!**
+Built with ❤️ for better productivity and focus management.
