@@ -1017,13 +1017,14 @@ def start_timer():
         return jsonify({"error": "Cannot start timer for completed task"}), 400
     
     try:
-        # Stop any other running timers for this user
+        # Stop any other running timers for this user and clean up stale sessions
         execute_query(
             """UPDATE user_tasks SET 
                status = CASE WHEN status = 'in-progress' THEN 'paused' ELSE status END,
                timer_start_time = NULL, 
-               timer_session_id = NULL
-               WHERE user_id = %s AND timer_start_time IS NOT NULL""",
+               timer_session_id = NULL,
+               last_sync_time = NULL
+               WHERE user_id = %s AND (timer_start_time IS NOT NULL OR timer_session_id IS NOT NULL)""",
             (current_user.id,)
         )
         
@@ -1221,6 +1222,43 @@ def sync_timer():
     except psycopg2.Error as e:
         handle_database_error(e, "timer sync")
         return safe_error_response("Failed to sync timer")
+
+@app.route('/api/timer/cleanup', methods=['POST'])
+@login_required
+@csrf.exempt
+def cleanup_timer():
+    data = request.json
+    
+    # Security: Validate request data
+    is_valid, error_msg = validate_timer_request(data, ['task_id', 'session_id'])
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+    
+    task_id = int(data.get('task_id'))
+    session_id = data.get('session_id')
+    
+    # Verify task belongs to user
+    task = execute_query("SELECT id FROM user_tasks WHERE id = %s AND user_id = %s", 
+                         (task_id, current_user.id), fetch_one=True)
+    if not task:
+        return jsonify({"error": "Task not found or unauthorized"}), 404
+    
+    try:
+        # Clean up stale timer session
+        execute_query(
+            """UPDATE user_tasks SET 
+               status = CASE WHEN status = 'in-progress' THEN 'paused' ELSE status END,
+               timer_start_time = NULL, 
+               timer_session_id = NULL,
+               last_sync_time = NULL
+               WHERE id = %s AND user_id = %s AND timer_session_id = %s""",
+            (task_id, current_user.id, session_id)
+        )
+        
+        return jsonify({'status': 'success'})
+    except psycopg2.Error as e:
+        handle_database_error(e, "timer cleanup")
+        return safe_error_response("Failed to cleanup timer")
 
 @app.route('/api/timer/status/<int:task_id>', methods=['GET'])
 @login_required

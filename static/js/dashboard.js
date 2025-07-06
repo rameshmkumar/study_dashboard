@@ -65,30 +65,13 @@ document.addEventListener('DOMContentLoaded', async function() {
   }
   
   // Sync timer with server data when tab becomes visible
-  function syncTimerFromServer() {
-    if (timerState !== 'running' || !currentSelectedTaskId) return;
-    
-    fetchData(`/api/daily-summary?date=${getTodayDateString()}`)
-      .then(summaryData => {
-        if (!summaryData || !summaryData.tasks) return;
-        
-        const runningTask = summaryData.tasks.find(task => 
-          task.id === currentSelectedTaskId && task.status === 'in-progress' && task.timer_session_id
-        );
-        
-        if (runningTask && runningTask.timer_start_time) {
-          // Recalculate elapsed time from server data
-          const timerStartTime = new Date(runningTask.timer_start_time);
-          const now = new Date();
-          const sessionElapsed = now.getTime() - timerStartTime.getTime();
-          const serverElapsed = (runningTask.time_spent || 0) + sessionElapsed;
-          
-          // Reset client timer with server time
-          startClientTimer(serverElapsed);
-          console.log('Timer resynced from server:', Math.round(serverElapsed / 1000), 'seconds');
-        }
-      })
-      .catch(error => console.error('Error syncing timer from server:', error));
+  // Debounce sync operations to prevent conflicts
+  let syncTimeout = null;
+  function debouncedSync() {
+    if (syncTimeout) clearTimeout(syncTimeout);
+    syncTimeout = setTimeout(() => {
+      syncTimerWithServer();
+    }, 1000); // Wait 1 second before syncing
   }
 
   function startClientTimer(taskTimeSpent = 0) {
@@ -216,17 +199,17 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Tab visibility detection to fix timer sync issues
     document.addEventListener('visibilitychange', function() {
       if (!document.hidden) {
-        // Tab became visible - resync timer
-        console.log('Tab became visible, resyncing timer...');
-        syncTimerFromServer();
+        // Tab became visible - resync timer with debouncing
+        console.log('Tab became visible, scheduling timer sync...');
+        debouncedSync();
       }
     });
     
     // Window focus detection as backup
     window.addEventListener('focus', function() {
       setTimeout(() => {
-        console.log('Window focused, resyncing timer...');
-        syncTimerFromServer();
+        console.log('Window focused, scheduling timer sync...');
+        debouncedSync();
       }, 100); // Small delay to ensure tab is fully active
     });
     
@@ -624,6 +607,20 @@ document.addEventListener('DOMContentLoaded', async function() {
           const timerStartTime = new Date(runningTask.timer_start_time);
           const now = new Date();
           const sessionElapsed = now.getTime() - timerStartTime.getTime();
+          
+          // Validate timer session age - reject if older than 24 hours
+          const maxSessionAge = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+          if (sessionElapsed > maxSessionAge || sessionElapsed < 0) {
+            console.log('Timer session too old or invalid, resetting:', Math.round(sessionElapsed / 1000), 'seconds');
+            // Clean up stale timer session
+            await fetchData('/api/timer/cleanup', 'POST', {
+              task_id: runningTask.id,
+              session_id: runningTask.timer_session_id
+            });
+            showNotification('Stale timer session detected and cleaned up', 'warning');
+            return;
+          }
+          
           currentElapsed = (runningTask.time_spent || 0) + sessionElapsed;
           console.log('Calculated elapsed time:', Math.round(currentElapsed / 1000), 'seconds');
         }
@@ -928,6 +925,14 @@ document.addEventListener('DOMContentLoaded', async function() {
   // --- Task CRUD ---
   async function handleAddTask(event) {
     event.preventDefault();
+    
+    const submitBtn = document.getElementById('addTaskSubmitBtn');
+    
+    // Prevent duplicate submissions
+    if (submitBtn.disabled) {
+        return;
+    }
+    
     const title = document.getElementById('newTaskTitle').value;
     const description = document.getElementById('newTaskDescription').value;
     const startTime = document.getElementById('newTaskStartTime').value;
@@ -938,6 +943,10 @@ document.addEventListener('DOMContentLoaded', async function() {
         return;
     }
 
+    // Disable submit button and show loading state
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Adding...';
+
     const newTaskData = {
         entry_date: getTodayDateString(),
         title,
@@ -946,16 +955,22 @@ document.addEventListener('DOMContentLoaded', async function() {
         duration_minutes: duration ? parseInt(duration) : null,
     };
 
-    const createdTask = await fetchData('/api/user-tasks', 'POST', newTaskData);
-    if (createdTask) {
-        dailyTasks.push(createdTask);
-        addActivityLog(`Added task: ${createdTask.title}`);
-        renderSchedule();
-        renderTaskOptions();
-        updateAllStats();
-        addTaskModal.style.display = 'none';
-        addTaskForm.reset();
-        showNotification('Task added successfully!');
+    try {
+        const createdTask = await fetchData('/api/user-tasks', 'POST', newTaskData);
+        if (createdTask) {
+            dailyTasks.push(createdTask);
+            addActivityLog(`Added task: ${createdTask.title}`);
+            renderSchedule();
+            renderTaskOptions();
+            updateAllStats();
+            addTaskModal.style.display = 'none';
+            addTaskForm.reset();
+            showNotification('Task added successfully!');
+        }
+    } finally {
+        // Re-enable submit button
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Add Task';
     }
   }
 
